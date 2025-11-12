@@ -1,0 +1,28 @@
+# gpiozero example
+# Input on BCM 17 from ESP32, LED on BCM 27
+
+from gpiozero import LED, DigitalInputDevice
+from signal import pause
+from time import monotonic
+
+motion_in = DigitalInputDevice(17, pull_up=False)  # ESP32 drives it, so no pull-up needed
+led = LED(27)
+
+last = 0.0
+MIN_GAP = 0.1  # ignore pulses faster than 100 ms (deglitch)
+
+def on_rising():
+    global last
+    now = monotonic()
+    if now - last < MIN_GAP:
+        return
+    last = now
+    # flash LED to show we saw the pulse
+    led.on()
+    # keep it on briefly so it's visible
+    led.blink(on_time=0.2, off_time=0.2, n=1, background=True)
+
+motion_in.when_activated = on_rising
+
+print("Watching GPIO17 for pulses; LED on GPIO27.")
+pause()
