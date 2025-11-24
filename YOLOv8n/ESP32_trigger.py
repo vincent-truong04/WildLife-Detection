@@ -5,7 +5,7 @@ import cv2
 import numpy as np
 from picamera2 import Picamera2
 from datetime import datetime
-from ultralytics import YOLO
+from hailo_utils import HailoYOLO
 import os
 import firebase_admin
 from firebase_admin import credentials, storage
@@ -14,7 +14,7 @@ from firebase_admin import credentials, storage
 GPIO_PIN = 17
 NUM_FRAMES = 3
 FRAME_DELAY = 0.2  # 200ms between frames
-OUTPUT_DIR = "/home/raspberrypi/yolo_project/WildLife-Detection/detections"
+OUTPUT_DIR = "/home/pi/Public/WildLife-Detection/Firebase"
 UPLOAD_TO_FIREBASE = True  # Set to False to disable Firebase uploads
 
 # ========== Initialization Functions =========
@@ -24,7 +24,7 @@ def initialize_firebase():
     if not UPLOAD_TO_FIREBASE:
         return None
     
-    cred = credentials.Certificate("/home/raspberrypi/yolo_project/WildLife-Detection/Firebase/real-time-wildlife-detector-firebase-adminsdk-fbsvc-7c1cbed963.json")
+    cred = credentials.Certificate("/home/pi/Public/WildLife-Detection/Firebase/real-time-wildlife-detector-firebase-adminsdk-fbsvc-7c1cbed963.json")
     firebase_admin.initialize_app(cred, {
         "storageBucket": "real-time-wildlife-detector.firebasestorage.app"
     })
@@ -48,11 +48,12 @@ def initialize_camera():
     print("Camera initialized!")
     return picam2
 
-def initialize_yolo_model(model_path='yolov8n.pt'):
-    """Load YOLO model."""
-    print(f"Loading YOLO model from {model_path}...")
-    model = YOLO(model_path)
-    print("YOLO model loaded!")
+def initialize_yolo_model(model_path='yolov8n.hef'): # Changed to .hef
+    """Load Hailo YOLO model."""
+    print(f"Loading Hailo model from {model_path}...")
+    # We ignore the old Ultralytics logic and use our wrapper
+    model = HailoYOLO(model_path, labels_path="coco.txt")
+    print("Hailo AI HAT+ model loaded!")
     return model
 
 # ========== Frame Capture Functions ==========
@@ -86,7 +87,7 @@ def run_detection_on_frame(model, frame, frame_num):
     print(f"Processing frame {frame_num}...")
     
     # Run inference
-    results = model(frame, conf=0.25)  # 25% confidence threshold
+    results = model(frame, conf=0.50)  # 50% confidence threshold
     detections = results[0].boxes
     
     # Print detected objects
@@ -254,7 +255,7 @@ def main():
     bucket = initialize_firebase()
     gpio_handle = initialize_gpio()
     picam2 = initialize_camera()
-    model = initialize_yolo_model('yolov8n.pt')  # Change model path here if needed
+    model = initialize_yolo_model('yolov8n.hef')  # Change model path here if needed
     
     # Start monitoring for triggers
     try:
