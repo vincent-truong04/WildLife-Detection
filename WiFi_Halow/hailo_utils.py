@@ -5,7 +5,7 @@ from hailo_platform import (HEF, VDevice, HailoStreamInterface, InferVStreams,
                             ConfigureParams, InputVStreamParams, OutputVStreamParams, FormatType)
 
 class HailoYOLO:
-    def __init__(self, hef_path, labels_path="coco.txt"):
+    def __init__(self, hef_path, labels_path="/home/pi/Public/WildLife-Detection/YOLOv8n/coco.txt"):
         print(f"Loading HEF: {hef_path}")
         self.hef = HEF(hef_path)
         self.target = VDevice()
@@ -34,6 +34,12 @@ class HailoYOLO:
         else:
             self.names = {i: str(i) for i in range(80)}
 
+        #Open inference pipeline once - reuse every call
+        self.infer_pipeline = InferVStreams(self.network_group, self.input_vstream_params, self.output_vstream_params)
+        self.infer_pipeline.__enter__()
+        self.ng_activation = self.network_group.activate(self.network_group_params)
+        self.ng_activation.__enter__()
+
     def __call__(self, frame, conf=0.45):
         # 1. PREPROCESSING
         resized = cv2.resize(frame, (self.width, self.height))
@@ -42,9 +48,7 @@ class HailoYOLO:
         input_data = np.expand_dims(resized_rgb, axis=0)
 
         # 2. INFERENCE
-        with InferVStreams(self.network_group, self.input_vstream_params, self.output_vstream_params) as infer_pipeline:
-            with self.network_group.activate(self.network_group_params):
-                results = infer_pipeline.infer(input_data)
+        results = self.infer_pipeline.infer(input_data)
 
         # 3. OUTPUT PARSING (The Fix for "Inhomogeneous Shape")
         # Get raw output (usually a list of lists)
@@ -101,6 +105,13 @@ class HailoYOLO:
                 pass # Ignore parsing errors if format is totally unknown
 
         return [FakeResult(boxes, self.names, frame)]
+    
+    def __del__(self):
+        try:
+            self.infer_pipeline.__exit__(None, None, None)
+            self.ng_activation.__exit__(None, None, None)
+        except Exception:
+            pass
 
 # Helper Classes
 class FakeBox:

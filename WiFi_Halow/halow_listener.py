@@ -14,8 +14,10 @@ from firebase_admin import credentials, storage
 HOST       = "0.0.0.0"
 PORT       = 8080
 MAX_SIZE   = 10 * 1024 * 1024  # 10MB to handle XGA JPEGs
-OUTPUT_DIR = "/home/pi/Public/WildLife-Detection/Firebase"
-UPLOAD_TO_FIREBASE = True
+OUTPUT_DIR = "/home/pi/Public/WildLife-Detection/Firebase/Images"
+UPLOAD_TO_FIREBASE = False
+model_lock = threading.Lock()
+model_path = os.path.join(os.path.dirname(__file__), 'yolov8n.hef')
 
 # ── Firebase ──────────────────────────────────────────────────────────────────
 def initialize_firebase():
@@ -30,9 +32,9 @@ def initialize_firebase():
     return bucket
 
 # ── YOLO ──────────────────────────────────────────────────────────────────────
-def initialize_yolo_model(model_path='yolov8n.hef'):
+def initialize_yolo_model(model_path):
     print(f"Loading Hailo model from {model_path}...")
-    model = HailoYOLO(model_path, labels_path="coco.txt")
+    model = HailoYOLO(model_path, labels_path="/home/pi/Public/WildLife-Detection/YOLOv8n/coco.txt")
     print("Hailo AI HAT+ model loaded!")
     return model
 
@@ -110,12 +112,14 @@ def handle_image(img_data, cam_id, model, bucket):
     cv2.imwrite(original_path, frame)
 
     # Run detection — only one frame per trigger since the ESP32 sends one image
-    results, has_detection = run_detection(model, frame, frame_num=1)
+    with model_lock:
+        results, has_detection = run_detection(model, frame, frame_num=1)
 
     frames_with_detections = []
     if has_detection:
-        path = save_annotated(results, frame_num=1, session_dir=session_dir, model=model)
-        frames_with_detections.append((1, path))
+        with model_lock:
+            path = save_annotated(results, frame_num=1, session_dir=session_dir, model=model)
+            frames_with_detections.append((1, path))
 
     upload_to_firebase(bucket, frames_with_detections, timestamp)
 
@@ -174,7 +178,7 @@ def handle_connection(conn, addr, model, bucket):
 # ── Main ──────────────────────────────────────────────────────────────────────
 def main():
     bucket = initialize_firebase()
-    model  = initialize_yolo_model('yolov8n.hef')
+    model  = initialize_yolo_model(model_path)
 
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
