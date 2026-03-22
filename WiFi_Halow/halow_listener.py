@@ -1,10 +1,31 @@
 #!/usr/bin/env python3
 """
-halow_listener.py — Raspberry Pi TCP receiver for the wildlife detector.
+halow_listener.py — Raspberry Pi TCP receiver for the wildlife detector (v3 - Final)
 
-Receives JPEG images from ESP32 field cameras over HaLow (802.11ah),
-runs YOLOv8n inference on the Hailo 8L accelerator, saves annotated
-results, and optionally uploads detections to Firebase Storage.
+── Architecture ──────────────────────────────────────────────────────────────
+
+Uses persistent TCP sessions. Each camera connects once, performs a handshake,
+and streams all images over the same socket until the link drops. The Pi's
+session handler loops indefinitely receiving images one at a time until the
+camera disconnects. When the camera reconnects the accept() loop catches it
+and spawns a fresh session thread.
+
+The ACK is sent to the camera BEFORE inference so the camera never waits for
+Hailo processing before knowing its image was received. Inference is dispatched
+to a separate thread so the socket closes immediately after the ACK.
+
+── Wire protocol (must match HalowClient.ino) ────────────────────────────────
+
+  Session handshake (once per TCP connection):
+    Client → Server : [1 byte]        id_len
+    Client → Server : [id_len bytes]  cam_id (ASCII, e.g. "A")
+    Server → Client : [1 byte]        0xAC (accepted) | 0x00 (rejected)
+
+  Per-image frame (repeated until connection closes):
+    Client → Server : [4 bytes LE]    image_length (uint32)
+                                      0x00000000 = heartbeat ping
+    Client → Server : [img_len bytes] JPEG payload (omitted for heartbeat)
+    Server → Client : [1 byte]        0xAC (received OK) | 0x00 (error)
 """
 
 import socket
@@ -12,34 +33,35 @@ import struct
 import os
 import shutil
 import threading
+import traceback
 from datetime import datetime
+
 import cv2
 import numpy as np
 from hailo_utils import HailoYOLO
 import firebase_admin
 from firebase_admin import credentials, storage
 
+
 # ══════════════════════════════════════════════════════════════════════════════
 #  Configuration
 # ══════════════════════════════════════════════════════════════════════════════
-HOST             = "0.0.0.0"
-PORT             = 8080
-MAX_IMAGE_BYTES  = 10 * 1024 * 1024   # 10 MB ceiling — rejects corrupt headers
-RECV_TIMEOUT_S   = 60                 # per-connection socket timeout.
-                                       # Original was 15 s — too tight for a
-                                       # large XGA JPEG over a variable-latency
-                                       # HaLow link.
-LISTEN_BACKLOG   = 5                  # max queued connections before accept().
-                                       # Original was 2 — a burst from two
-                                       # cameras could overflow it, dropping
-                                       # the third connection before we ever
-                                       # called accept().
+HOST              = "0.0.0.0"
+PORT              = 8080
+MAX_IMAGE_BYTES   = 10 * 1024 * 1024   # 10 MB — rejects corrupt length headers
+
+# Per-recv() timeout. Covers individual recv calls, not the whole session.
+# A camera between PIR triggers will be idle on the socket — that is expected
+# and does not time out here because recv_exact() is only called when data
+# has been announced. Timeout only fires if the radio link dies mid-transfer.
+RECV_CHUNK_TIMEOUT_S = 30
+
+LISTEN_BACKLOG    = 5
 
 OUTPUT_DIR        = "/home/pi/Public/WildLife-Detection/Firebase/Images"
-DISK_WARN_BYTES   = 500 * 1024 * 1024  # warn when free space falls below 500 MB
+DISK_WARN_BYTES   = 500 * 1024 * 1024
 UPLOAD_TO_FIREBASE = False
 
-# FIX: centralise the credential path so it only needs to change in one place.
 FIREBASE_CERT     = (
     "/home/pi/Public/WildLife-Detection/Firebase/"
     "real-time-wildlife-detector-firebase-adminsdk-fbsvc-7c1cbed963.json"
@@ -50,32 +72,20 @@ MODEL_PATH        = os.path.join(os.path.dirname(__file__), "yolov8n.hef")
 LABELS_PATH       = "/home/pi/Public/WildLife-Detection/YOLOv8n/coco.txt"
 
 # Protocol bytes — must match HalowClient.ino
-ACK = bytes([0xAC])   # success: full image received and decoded
-NAK = bytes([0x00])   # failure: something went wrong, please retry
+ACK = bytes([0xAC])
+NAK = bytes([0x00])
 
-# Serialises concurrent access to the Hailo inference pipeline.
-# The pipeline itself is not thread-safe; the lock prevents two camera
-# threads from calling model() simultaneously.
+# Serialises access to the Hailo inference pipeline which is not thread-safe.
+# Only the model() call is protected — file I/O happens outside the lock.
 model_lock = threading.Lock()
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  recv_exact()
-#  THE most important fix in this file.
-#
-#  TCP is a stream protocol. conn.recv(n) is legally allowed to return
-#  anywhere from 1 to n bytes — the OS decides how much to deliver based on
-#  segment boundaries, buffer state, and MTU. Over HaLow with its variable
-#  latency this is especially common.
-#
-#  The original code called conn.recv(4) for the image-length header and
-#  assumed it would always return exactly 4 bytes. When it didn't (e.g. only
-#  2 bytes arrived), struct.unpack('<I', ...) unpacked garbage as the length,
-#  the subsequent recv() tried to read several gigabytes, failed, and the
-#  connection was silently dropped — with no indication of why.
-#
-#  recv_exact() loops until exactly n bytes have accumulated, or raises
-#  ConnectionError if the socket closes early.
+#  Reads exactly n bytes from conn, looping over partial TCP segments.
+#  TCP is a stream protocol — recv(n) may return anywhere from 1 to n bytes.
+#  Over HaLow this is the rule not the exception due to variable burst sizes.
+#  Raises ConnectionError if the remote end closes before n bytes arrive.
 # ══════════════════════════════════════════════════════════════════════════════
 def recv_exact(conn: socket.socket, n: int) -> bytes:
     buf = bytearray()
@@ -90,7 +100,7 @@ def recv_exact(conn: socket.socket, n: int) -> bytes:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  Firebase
+#  Firebase helpers
 # ══════════════════════════════════════════════════════════════════════════════
 def initialize_firebase():
     if not UPLOAD_TO_FIREBASE:
@@ -98,14 +108,14 @@ def initialize_firebase():
     cred = credentials.Certificate(FIREBASE_CERT)
     firebase_admin.initialize_app(cred, {"storageBucket": FIREBASE_BUCKET})
     bucket = storage.bucket()
-    print("[Firebase] Initialized")
+    print("[Firebase] Initialised")
     return bucket
 
 
 def upload_to_firebase(bucket, detections: list, timestamp: str):
     if not UPLOAD_TO_FIREBASE or bucket is None or not detections:
         if not detections:
-            print("  ⚠ No detections — nothing uploaded to Firebase")
+            print("  No detections — nothing uploaded to Firebase")
         return
     print(f"  [Firebase] Uploading {len(detections)} frame(s)…")
     for _, path in detections:
@@ -117,20 +127,33 @@ def upload_to_firebase(bucket, detections: list, timestamp: str):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+#  Disk space guard
+# ══════════════════════════════════════════════════════════════════════════════
+def check_disk_space(path: str) -> bool:
+    try:
+        free = shutil.disk_usage(path).free
+        if free < DISK_WARN_BYTES:
+            print(f"  ⚠ LOW DISK SPACE: only {free // (1024 * 1024)} MB free on {path}")
+            return False
+    except Exception as e:
+        print(f"  ⚠ Could not check disk space on {path}: {e}")
+    return True
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 #  YOLO helpers
 # ══════════════════════════════════════════════════════════════════════════════
 def initialize_yolo_model(model_path: str, labels_path: str) -> HailoYOLO:
     print(f"[YOLO] Loading model from {model_path}…")
     model = HailoYOLO(model_path, labels_path=labels_path)
-    print("[YOLO] Hailo AI HAT+ model ready")
+    print("[YOLO] Hailo 8L model ready")
     return model
 
 
 def run_detection(model: HailoYOLO, frame, frame_num: int):
-    """Run inference. Returns (results, has_detection)."""
     results    = model(frame, conf=0.50)
     detections = results[0].boxes
-    if len(detections) > 0:
+    if detections:
         print(f"  Frame {frame_num}: {len(detections)} object(s) detected")
         for box in detections:
             label = model.names[int(box.cls[0])]
@@ -141,20 +164,9 @@ def run_detection(model: HailoYOLO, frame, frame_num: int):
     return None, False
 
 
-def get_labels(results, model: HailoYOLO) -> list:
-    return sorted({model.names[int(b.cls[0])] for b in results[0].boxes})
-
-
 def save_annotated(results, frame_num: int, session_dir: str,
                    model: HailoYOLO) -> str:
-    """
-    Draw bounding boxes on the frame and save to disk.
-    NOTE: this function does NOT need the model_lock — it only calls
-    results[0].plot() (OpenCV drawing) and cv2.imwrite(). The original
-    code held model_lock across this call, unnecessarily blocking other
-    camera threads from running inference while a JPEG was being written.
-    """
-    labels    = get_labels(results, model)
+    labels    = sorted({model.names[int(b.cls[0])] for b in results[0].boxes})
     label_str = "_".join(labels)[:100]
     filename  = f"frame_{frame_num}_{label_str}.jpg"
     path      = os.path.join(session_dir, filename)
@@ -163,38 +175,18 @@ def save_annotated(results, frame_num: int, session_dir: str,
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  Disk space guard
-#  FIX: the original code saved images unconditionally. An unattended Pi in
-#  the field will eventually fill its SD card, after which cv2.imwrite()
-#  silently returns False and images are lost with no indication of why.
-#  This function logs a warning when free space is low and returns False
-#  to let the caller skip the save.
-# ══════════════════════════════════════════════════════════════════════════════
-def check_disk_space(path: str) -> bool:
-    try:
-        free = shutil.disk_usage(path).free
-        if free < DISK_WARN_BYTES:
-            print(f"  ⚠ LOW DISK SPACE: only {free // (1024*1024)} MB free "
-                  f"on {path}")
-            return False
-    except Exception as e:
-        print(f"  ⚠ Could not check disk space: {e}")
-    return True
-
-
-# ══════════════════════════════════════════════════════════════════════════════
 #  handle_image()
-#  Called once per received image. Decodes the JPEG, runs YOLO, saves
-#  annotated results, and uploads to Firebase.
+#  Called from a dedicated thread after ACK has been sent to the camera.
+#  Any exception here does NOT affect the TCP session.
 # ══════════════════════════════════════════════════════════════════════════════
-def handle_image(img_data: bytes, cam_id: str, model: HailoYOLO, bucket):
+def handle_image(img_data: bytes, cam_id: str, img_num: int,
+                 model: HailoYOLO, bucket):
     timestamp   = datetime.now().strftime("%m_%d_%Y_%H%M%S")
     session_dir = os.path.join(OUTPUT_DIR, f"cam{cam_id}_motion_{timestamp}")
 
     print(f"\n{'='*55}")
-    print(f"[Cam {cam_id}] {len(img_data):,} bytes  @  {timestamp}")
+    print(f"[Cam {cam_id}] Image #{img_num}  {len(img_data):,} bytes  @ {timestamp}")
 
-    # ── Disk space check ───────────────────────────────────────────────────────
     if not check_disk_space(OUTPUT_DIR):
         print(f"[Cam {cam_id}] Skipping save — insufficient disk space")
         print(f"{'='*55}\n")
@@ -203,7 +195,6 @@ def handle_image(img_data: bytes, cam_id: str, model: HailoYOLO, bucket):
     os.makedirs(session_dir, exist_ok=True)
     print(f"Saving to: {session_dir}")
 
-    # ── Decode JPEG ────────────────────────────────────────────────────────────
     np_arr = np.frombuffer(img_data, dtype=np.uint8)
     frame  = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
     if frame is None:
@@ -211,20 +202,13 @@ def handle_image(img_data: bytes, cam_id: str, model: HailoYOLO, bucket):
         print(f"{'='*55}\n")
         return
 
-    # Save the unmodified original before any annotation
     original_path = os.path.join(session_dir, "frame_1_original.jpg")
     cv2.imwrite(original_path, frame)
 
-    # ── Inference (lock held only during the Hailo call) ──────────────────────
-    # FIX: model_lock now wraps ONLY the inference call.
-    # The original code also held the lock across save_annotated(), which
-    # calls cv2.imwrite() — a pure disk write with no involvement from the
-    # Hailo pipeline. Holding the lock there unnecessarily serialised all
-    # camera sessions for the duration of a file write.
+    # model_lock held only for the Hailo call — file I/O happens outside
     with model_lock:
         results, has_detection = run_detection(model, frame, frame_num=1)
 
-    # ── Annotate and save (lock NOT held here) ─────────────────────────────────
     frames_with_detections = []
     if has_detection:
         path = save_annotated(results, frame_num=1,
@@ -241,75 +225,136 @@ def handle_image(img_data: bytes, cam_id: str, model: HailoYOLO, bucket):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  receive_image()
-#  Reads one complete framed message from the socket and dispatches it to
-#  handle_image().  Sends ACK on success, NAK on any error so the ESP32
-#  knows whether to retry.
+#  receive_session()
+#  Manages one complete camera session: handshake then image-receive loop.
 #
-#  Wire format (must match HalowClient.ino):
-#    1 byte        — byte-length of camera ID string
-#    id_len bytes  — camera ID (ASCII, e.g. "A")
-#    4 bytes LE    — image payload length (uint32, little-endian)
-#    img_len bytes — raw JPEG payload
-#    → 0xAC (ACK) or 0x00 (NAK) sent back
-#
-#  All reads go through recv_exact() so partial TCP segments can never
-#  corrupt the length header or misalign the image stream.
+#  Session lifecycle:
+#    1. Read the camera identity from the handshake.
+#    2. Send ACK to confirm Pi is ready.
+#    3. Loop:
+#         a. Read 4-byte frame header.
+#         b. If length is 0 — heartbeat ping, send ACK pong, continue.
+#         c. Validate the length.
+#         d. Read the full JPEG payload.
+#         e. Send ACK immediately before inference — camera must not wait.
+#         f. Dispatch handle_image() to its own thread so this loop can
+#            immediately receive the next image without waiting for
+#            inference and disk I/O to complete.
+#    4. When ConnectionError is raised (camera rebooted, link dropped etc.)
+#       print the disconnection and return. The accept() loop catches the
+#       next connect() and spawns a fresh thread.
 # ══════════════════════════════════════════════════════════════════════════════
-def receive_image(conn: socket.socket, addr, model: HailoYOLO, bucket):
-    try:
-        # Camera ID
-        id_len = recv_exact(conn, 1)[0]
-        cam_id = recv_exact(conn, id_len).decode("ascii")
 
-        # Image length
-        img_len = struct.unpack("<I", recv_exact(conn, 4))[0]
-        if not (0 < img_len <= MAX_IMAGE_BYTES):
-            print(f"[Cam {cam_id}] Rejected: claimed {img_len} bytes — "
-                  f"outside valid range (0, {MAX_IMAGE_BYTES}]")
+class SessionError(Exception):
+    """Raised when the session must close due to a protocol violation."""
+
+
+def receive_session(conn: socket.socket, addr: tuple,
+                    model: HailoYOLO, bucket):
+    remote      = addr[0]
+    image_count = 0
+    cam_id      = "?"
+
+    try:
+        # ── Handshake ──────────────────────────────────────────────────────────
+        id_len = recv_exact(conn, 1)[0]
+        if id_len == 0:
+            print(f"[{remote}] Handshake: zero-length camera ID — rejecting")
             conn.sendall(NAK)
             return
 
-        print(f"[Cam {cam_id}] Receiving {img_len:,} bytes from {addr[0]}")
-
-        # Full image payload — may arrive across many TCP segments over HaLow
-        img_data = recv_exact(conn, img_len)
-
-        # FIX: send ACK *before* running inference.
-        # Inference on the Hailo can take several seconds. If we waited until
-        # after handle_image() to send the ACK, the ESP32 would time out
-        # waiting for a response and retry an image that was already received
-        # correctly. The ACK confirms receipt, not processing completion.
+        cam_id = recv_exact(conn, id_len).decode("ascii")
+        print(f"[{remote}] Camera '{cam_id}' connected")
         conn.sendall(ACK)
 
-        handle_image(img_data, cam_id, model, bucket)
+        # ── Image receive loop ─────────────────────────────────────────────────
+        while True:
+            raw_len = recv_exact(conn, 4)
+            img_len = struct.unpack("<I", raw_len)[0]
+
+            # Zero-length frame = heartbeat ping — respond and continue
+            if img_len == 0:
+                conn.sendall(ACK)
+                print(f"[Cam {cam_id}] Heartbeat ✓")
+                continue
+
+            # Non-zero but out of range = stream misalignment
+            if img_len > MAX_IMAGE_BYTES:
+                print(f"[Cam {cam_id}] Invalid image length {img_len} (max {MAX_IMAGE_BYTES}) — closing session")
+                conn.sendall(NAK)
+                raise SessionError(f"Invalid image length {img_len}")
+
+            print(f"[Cam {cam_id}] Receiving image #{image_count + 1}  ({img_len:,} bytes) from {remote}")
+
+            img_data = recv_exact(conn, img_len)
+
+            # ACK immediately — before inference.
+            # Hailo inference can take 1-3 s. If ACK waited until after
+            # handle_image() the camera would time out and retry an image
+            # that was already received correctly.
+            conn.sendall(ACK)
+
+            image_count += 1
+
+            # Dispatch processing to its own thread so this loop can
+            # immediately receive the next image without waiting for
+            # inference and disk I/O to complete.
+            threading.Thread(
+                target=_safe_handle_image,
+                args=(img_data, cam_id, image_count, model, bucket),
+                daemon=True,
+            ).start()
 
     except ConnectionError as e:
-        print(f"[{addr[0]}] Connection error: {e}")
-        try:
-            conn.sendall(NAK)
-        except Exception:
-            pass
+        print(f"[Cam {cam_id} @ {remote}] Disconnected after {image_count} image(s): {e}")
+
+    except SessionError as e:
+        print(f"[{remote}] Session terminated: {e}")
+
+    except socket.timeout:
+        print(f"[{remote}] Session timed out after {RECV_CHUNK_TIMEOUT_S} s of inactivity")
+
     except Exception as e:
-        print(f"[{addr[0]}] Unexpected error: {e}")
-        try:
-            conn.sendall(NAK)
-        except Exception:
-            pass
+        print(f"[{remote}] Unexpected error in session (after {image_count} images): {e}")
+        traceback.print_exc()
+
+    finally:
+        print(f"[{remote}] Session closed  (received {image_count} image(s))")
 
 
-def handle_connection(conn: socket.socket, addr, model: HailoYOLO, bucket):
+def _safe_handle_image(img_data, cam_id, img_num, model, bucket):
+    """Wrapper so exceptions in handle_image() are printed not silently lost."""
+    try:
+        handle_image(img_data, cam_id, img_num, model, bucket)
+    except Exception as e:
+        print(f"[Cam {cam_id}] handle_image() raised an exception: {e}")
+        traceback.print_exc()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  handle_connection()
+# ══════════════════════════════════════════════════════════════════════════════
+def handle_connection(conn: socket.socket, addr: tuple,
+                      model: HailoYOLO, bucket):
     with conn:
-        # SO_KEEPALIVE lets the OS detect silent drops from field devices
-        # rather than leaving a thread hanging on recv_exact() indefinitely.
+        # SO_KEEPALIVE lets OS detect cameras that vanish silently
         conn.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
-        # Timeout covers the entire receive phase (header + payload).
-        # 60 s is enough for a ~2 MB XGA JPEG over a slow HaLow link.
-        conn.settimeout(RECV_TIMEOUT_S)
+
+        # Tune keepalive to detect dead connections within ~60s
+        # rather than the default 2+ hours
         try:
-            receive_image(conn, addr, model, bucket)
-        except socket.timeout:
-            print(f"[{addr[0]}] Timed out after {RECV_TIMEOUT_S} s")
+            conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE,  60)
+            conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 10)
+            conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT,    5)
+        except (AttributeError, OSError):
+            pass  # not available on all platforms
+
+        # Increase socket buffers for HaLow link headroom
+        conn.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 131072)
+        conn.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 131072)
+
+        conn.settimeout(RECV_CHUNK_TIMEOUT_S)
+        receive_session(conn, addr, model, bucket)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -325,17 +370,18 @@ def main():
         srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         srv.bind((HOST, PORT))
         srv.listen(LISTEN_BACKLOG)
+
         print(f"[Server] Listening on {HOST}:{PORT}")
         print(f"[Server] Output: {os.path.abspath(OUTPUT_DIR)}")
-        print(f"[Server] Timeout: {RECV_TIMEOUT_S} s  "
-              f"Backlog: {LISTEN_BACKLOG}")
+        print(f"[Server] Chunk timeout: {RECV_CHUNK_TIMEOUT_S} s  Backlog: {LISTEN_BACKLOG}")
 
         while True:
             conn, addr = srv.accept()
+            print(f"[Server] Incoming connection from {addr[0]}:{addr[1]}")
             threading.Thread(
                 target=handle_connection,
                 args=(conn, addr, model, bucket),
-                daemon=True
+                daemon=True,
             ).start()
 
 
