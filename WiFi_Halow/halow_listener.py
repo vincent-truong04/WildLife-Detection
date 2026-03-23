@@ -373,7 +373,7 @@ def handle_connection(conn: socket.socket, addr: tuple,
         conn.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 131072)
         conn.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 131072)
 
-        conn.settimeout(RECV_CHUNK_TIMEOUT_S)
+        conn.settimeout(2)
         receive_session(conn, addr, model, bucket)
 
 
