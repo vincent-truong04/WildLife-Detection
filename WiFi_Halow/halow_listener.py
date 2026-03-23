@@ -1,32 +1,4 @@
 #!/usr/bin/env python3
-"""
-halow_listener.py — Raspberry Pi TCP receiver for the wildlife detector (v3 - Final)
-
-── Architecture ──────────────────────────────────────────────────────────────
-
-Uses persistent TCP sessions. Each camera connects once, performs a handshake,
-and streams all images over the same socket until the link drops. The Pi's
-session handler loops indefinitely receiving images one at a time until the
-camera disconnects. When the camera reconnects the accept() loop catches it
-and spawns a fresh session thread.
-
-The ACK is sent to the camera BEFORE inference so the camera never waits for
-Hailo processing before knowing its image was received. Inference is dispatched
-to a separate thread so the socket closes immediately after the ACK.
-
-── Wire protocol (must match HalowClient.ino) ────────────────────────────────
-
-  Session handshake (once per TCP connection):
-    Client → Server : [1 byte]        id_len
-    Client → Server : [id_len bytes]  cam_id (ASCII, e.g. "A")
-    Server → Client : [1 byte]        0xAC (accepted) | 0x00 (rejected)
-
-  Per-image frame (repeated until connection closes):
-    Client → Server : [4 bytes LE]    image_length (uint32)
-                                      0x00000000 = heartbeat ping
-    Client → Server : [img_len bytes] JPEG payload (omitted for heartbeat)
-    Server → Client : [1 byte]        0xAC (received OK) | 0x00 (error)
-"""
 
 import socket
 import struct
@@ -54,7 +26,7 @@ MAX_IMAGE_BYTES   = 10 * 1024 * 1024   # 10 MB — rejects corrupt length header
 # A camera between PIR triggers will be idle on the socket — that is expected
 # and does not time out here because recv_exact() is only called when data
 # has been announced. Timeout only fires if the radio link dies mid-transfer.
-RECV_CHUNK_TIMEOUT_S = 30
+RECV_CHUNK_TIMEOUT_S = 300
 
 LISTEN_BACKLOG    = 5
 
@@ -78,6 +50,14 @@ NAK = bytes([0x00])
 # Serialises access to the Hailo inference pipeline which is not thread-safe.
 # Only the model() call is protected — file I/O happens outside the lock.
 model_lock = threading.Lock()
+
+# ── Session generation counter ───────────────────────────────────────────────
+# Incremented every time a new connection arrives. Each session thread checks
+# its own generation against this before sending any data back to the ESP32.
+# If a newer session exists, the old thread exits immediately — preventing
+# stale ACK bytes from polluting the new session's handshake.
+session_lock    = threading.Lock()
+current_session = {"gen": 0}
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -224,25 +204,34 @@ def handle_image(img_data: bytes, cam_id: str, img_num: int,
     print(f"{'='*55}\n")
 
 
+def _safe_handle_image(img_data, cam_id, img_num, model, bucket):
+    """Wrapper so exceptions in handle_image() are printed not silently lost."""
+    try:
+        handle_image(img_data, cam_id, img_num, model, bucket)
+    except Exception as e:
+        print(f"[Cam {cam_id}] handle_image() raised an exception: {e}")
+        traceback.print_exc()
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 #  receive_session()
 #  Manages one complete camera session: handshake then image-receive loop.
 #
 #  Session lifecycle:
-#    1. Read the camera identity from the handshake.
-#    2. Send ACK to confirm Pi is ready.
-#    3. Loop:
-#         a. Read 4-byte frame header.
-#         b. If length is 0 — heartbeat ping, send ACK pong, continue.
-#         c. Validate the length.
-#         d. Read the full JPEG payload.
-#         e. Send ACK immediately before inference — camera must not wait.
-#         f. Dispatch handle_image() to its own thread so this loop can
-#            immediately receive the next image without waiting for
-#            inference and disk I/O to complete.
-#    4. When ConnectionError is raised (camera rebooted, link dropped etc.)
-#       print the disconnection and return. The accept() loop catches the
-#       next connect() and spawns a fresh thread.
+#    1. Claim a generation number for this session.
+#    2. Read the camera identity from the handshake.
+#    3. Drain any stale bytes left from previous session.
+#    4. Send ACK to confirm Pi is ready.
+#    5. Loop:
+#         a. Check is_current() — exit immediately if superseded.
+#         b. Read 4-byte frame header.
+#         c. If length is 0 — heartbeat ping, send ACK pong, continue.
+#         d. Validate the length.
+#         e. Read the full JPEG payload.
+#         f. Check is_current() before ACK — do not pollute new session.
+#         g. Send ACK immediately before inference.
+#         h. Dispatch handle_image() to its own thread.
+#    6. On ConnectionError, SessionError, or timeout — exit cleanly.
 # ══════════════════════════════════════════════════════════════════════════════
 
 class SessionError(Exception):
@@ -255,6 +244,17 @@ def receive_session(conn: socket.socket, addr: tuple,
     image_count = 0
     cam_id      = "?"
 
+    # Claim this generation number — any older session thread that checks
+    # is_current() will now see it is superseded and exit immediately.
+    with session_lock:
+        current_session["gen"] += 1
+        my_gen = current_session["gen"]
+
+    def is_current():
+        """Returns False if a newer session has taken over."""
+        with session_lock:
+            return current_session["gen"] == my_gen
+
     try:
         # ── Handshake ──────────────────────────────────────────────────────────
         id_len = recv_exact(conn, 1)[0]
@@ -264,36 +264,65 @@ def receive_session(conn: socket.socket, addr: tuple,
             return
 
         cam_id = recv_exact(conn, id_len).decode("ascii")
-        print(f"[{remote}] Camera '{cam_id}' connected")
+
+        # Drain any stale bytes left in the buffer from a previous session.
+        # Without this the ESP32 reads leftover ACK/NAK bytes as the
+        # handshake response and gets 0x15 or other garbage instead of 0xAC.
+        conn.setblocking(False)
+        try:
+            while conn.recv(1024):
+                pass
+        except Exception:
+            pass
+        conn.setblocking(True)
+        conn.settimeout(RECV_CHUNK_TIMEOUT_S)
+
+        print(f"[{remote}] Camera '{cam_id}' connected (session {my_gen})")
         conn.sendall(ACK)
 
         # ── Image receive loop ─────────────────────────────────────────────────
         while True:
+            # Exit immediately if a newer session has taken over.
+            # This prevents this thread from sending stale data into
+            # whatever the new session is doing.
+            if not is_current():
+                print(f"[Cam {cam_id}] Session {my_gen} superseded — exiting")
+                return
+
             raw_len = recv_exact(conn, 4)
             img_len = struct.unpack("<I", raw_len)[0]
 
-            # Zero-length frame = heartbeat ping — respond and continue
+            # Zero-length frame = heartbeat ping
             if img_len == 0:
+                if not is_current():
+                    return
                 conn.sendall(ACK)
                 print(f"[Cam {cam_id}] Heartbeat ✓")
                 continue
 
             # Non-zero but out of range = stream misalignment
             if img_len > MAX_IMAGE_BYTES:
-                print(f"[Cam {cam_id}] Invalid image length {img_len} (max {MAX_IMAGE_BYTES}) — closing session")
+                print(f"[Cam {cam_id}] Invalid image length {img_len} "
+                      f"(max {MAX_IMAGE_BYTES}) — closing session")
                 conn.sendall(NAK)
                 raise SessionError(f"Invalid image length {img_len}")
 
-            print(f"[Cam {cam_id}] Receiving image #{image_count + 1}  ({img_len:,} bytes) from {remote}")
+            print(f"[Cam {cam_id}] Receiving image #{image_count + 1} "
+                  f" ({img_len:,} bytes) from {remote}")
 
             img_data = recv_exact(conn, img_len)
+
+            # Check generation before ACK — do not send ACK if superseded.
+            # A newer session may have already started on a different socket.
+            if not is_current():
+                print(f"[Cam {cam_id}] Session {my_gen} superseded before ACK — exiting")
+                return
 
             # ACK immediately — before inference.
             # Hailo inference can take 1-3 s. If ACK waited until after
             # handle_image() the camera would time out and retry an image
             # that was already received correctly.
             conn.sendall(ACK)
-
             image_count += 1
 
             # Dispatch processing to its own thread so this loop can
@@ -319,16 +348,7 @@ def receive_session(conn: socket.socket, addr: tuple,
         traceback.print_exc()
 
     finally:
-        print(f"[{remote}] Session closed  (received {image_count} image(s))")
-
-
-def _safe_handle_image(img_data, cam_id, img_num, model, bucket):
-    """Wrapper so exceptions in handle_image() are printed not silently lost."""
-    try:
-        handle_image(img_data, cam_id, img_num, model, bucket)
-    except Exception as e:
-        print(f"[Cam {cam_id}] handle_image() raised an exception: {e}")
-        traceback.print_exc()
+        print(f"[{remote}] Session {my_gen} closed  (received {image_count} image(s))")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -373,7 +393,8 @@ def main():
 
         print(f"[Server] Listening on {HOST}:{PORT}")
         print(f"[Server] Output: {os.path.abspath(OUTPUT_DIR)}")
-        print(f"[Server] Chunk timeout: {RECV_CHUNK_TIMEOUT_S} s  Backlog: {LISTEN_BACKLOG}")
+        print(f"[Server] Chunk timeout: {RECV_CHUNK_TIMEOUT_S} s  "
+              f"Backlog: {LISTEN_BACKLOG}")
 
         while True:
             conn, addr = srv.accept()
