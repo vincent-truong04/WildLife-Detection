@@ -1,11 +1,3 @@
-"""
-hailo_utils.py — Hailo 8L inference wrapper for YOLOv8n.
-
-Wraps the Hailo platform API in a callable class that mimics the
-ultralytics Results interface so halow_listener.py can call model(frame)
-and model.names without knowing about the underlying hardware.
-"""
-
 import numpy as np
 import cv2
 import os
@@ -19,35 +11,17 @@ log = logging.getLogger(__name__)
 
 
 class HailoYOLO:
-    """
-    Loads a compiled YOLOv8n .hef model onto the Hailo accelerator and
-    exposes a simple __call__ interface for single-frame inference.
-
-    Usage:
-        model = HailoYOLO("yolov8n.hef")
-        results = model(bgr_frame, conf=0.5)
-        for box in results[0].boxes:
-            print(model.names[int(box.cls[0])], box.conf[0])
-    """
 
     def __init__(self, hef_path: str,
                  labels_path: str = "/home/pi/Public/WildLife-Detection/YOLOv8n/coco.txt"):
         print(f"[Hailo] Loading HEF: {hef_path}")
 
-        # ── Resources that need to be cleaned up ──────────────────────────────
-        # Declared before any call that could raise so __del__ always finds
-        # them in a defined state, avoiding AttributeError during teardown.
         self.hef              = None
         self.target           = None
         self.infer_pipeline   = None
         self.ng_activation    = None
 
-        # FIX: wrap the entire constructor in try/except.
-        # If any step fails (bad HEF path, PCIe device busy, etc.) we
-        # explicitly release whatever resources were acquired before the
-        # exception propagated. Without this, the Hailo VDevice PCIe handle
-        # could leak and the next startup attempt would fail with
-        # "device already in use".
+
         try:
             self.hef    = HEF(hef_path)
             self.target = VDevice()
@@ -58,9 +32,7 @@ class HailoYOLO:
             self.network_group        = self.target.configure(self.hef, configure_params)[0]
             self.network_group_params = self.network_group.create_params()
 
-            # UINT8 input — camera frames are passed in as uint8 without
-            # pre-normalisation; the Hailo HEF includes the quantisation
-            # parameters and handles scaling internally.
+
             self.input_vstream_params = InputVStreamParams.make(
                 self.network_group, quantized=False, format_type=FormatType.UINT8
             )
@@ -74,7 +46,7 @@ class HailoYOLO:
             self.height  = input_info.shape[0]
             self.width   = input_info.shape[1]
 
-            # ── Class labels ──────────────────────────────────────────────────
+            # Class labels 
             if os.path.exists(labels_path):
                 with open(labels_path, "r") as f:
                     self.names = {i: name.strip() for i, name in enumerate(f)}
@@ -113,10 +85,24 @@ class HailoYOLO:
     #  to the ultralytics API.
     # ══════════════════════════════════════════════════════════════════════════
     def __call__(self, frame, conf: float = 0.45):
-        # ── Pre-processing ────────────────────────────────────────────────────
-        resized   = cv2.resize(frame, (self.width, self.height))
-        rgb       = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
-        input_data = np.expand_dims(rgb, axis=0)   # add batch dimension → (1,H,W,3)
+        # ── Pre-processing ─────────────────────────────────────────────────────
+        # Letterbox instead of plain resize to preserve aspect ratio.
+        # Squishing a 4:3 frame into a square input distorts animal proportions
+        # and hurts detection.
+        fh, fw = frame.shape[:2]
+        scale  = min(self.width / fw, self.height / fh)
+        nw, nh = int(fw * scale), int(fh * scale)
+
+        resized = cv2.resize(frame, (nw, nh))
+        rgb     = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
+
+        # Pad to the exact model input size
+        canvas       = np.zeros((self.height, self.width, 3), dtype=np.uint8)
+        pad_top      = (self.height - nh) // 2
+        pad_left     = (self.width  - nw) // 2
+        canvas[pad_top:pad_top + nh, pad_left:pad_left + nw] = rgb
+
+        input_data = np.expand_dims(canvas, axis=0)  # → (1, H, W, 3)
 
         # ── Inference ─────────────────────────────────────────────────────────
         raw_results = self.infer_pipeline.infer(input_data)
@@ -133,6 +119,22 @@ class HailoYOLO:
         #     raw[batch][detection] → [ymin, xmin, ymax, xmax, score, class_id]
         #
         raw_output = list(raw_results.values())[0]
+        try:
+            if isinstance(raw_output, list) and len(raw_output) > 0:
+                batch = raw_output[0]
+                for cid, dets in enumerate(batch):
+                    for det in dets:
+                        if len(det) >= 5 and det[4] > 0.05:
+                            print(f"  [DEBUG] class={cid} ({self.names.get(cid,'?')}) "
+                            f"score={det[4]:.3f} coords={det[:4]}")
+            else:
+                arr = np.array(raw_output)
+                if arr.ndim == 3: arr = arr[0]
+                for det in arr:
+                        if len(det) >= 5 and det[4] > 0.05:
+                            print(f"  [DEBUG] score={det[4]:.3f} cls={int(det[5]) if len(det)>5 else '?'}")
+        except Exception as e:
+            print(f"  [DEBUG] failed: {e}")
         boxes      = []
 
         h, w, _ = frame.shape   # original frame dimensions for coordinate scaling
@@ -150,10 +152,14 @@ class HailoYOLO:
                     if score < conf:
                         continue
                     ymin, xmin, ymax, xmax = det[:4]
+                    x1 = (xmin * self.width  - pad_left) / scale
+                    y1 = (ymin * self.height - pad_top)  / scale
+                    x2 = (xmax * self.width  - pad_left) / scale
+                    y2 = (ymax * self.height - pad_top)  / scale
                     boxes.append(FakeBox(
                         cls    = class_id,
                         conf   = score,
-                        coords = [xmin * w, ymin * h, xmax * w, ymax * h],
+                        coords = [x1, y1, x2, y2],
                     ))
         else:
             # ── Format B: flat numpy array ────────────────────────────────────
@@ -168,11 +174,14 @@ class HailoYOLO:
                     if score < conf:
                         continue
                     ymin, xmin, ymax, xmax = det[:4]
-                    cls_id = int(det[5]) if len(det) > 5 else 0
+                    x1 = (xmin * self.width  - pad_left) / scale
+                    y1 = (ymin * self.height - pad_top)  / scale
+                    x2 = (xmax * self.width  - pad_left) / scale
+                    y2 = (ymax * self.height - pad_top)  / scale
                     boxes.append(FakeBox(
-                        cls    = cls_id,
+                        cls    = class_id,
                         conf   = score,
-                        coords = [xmin * w, ymin * h, xmax * w, ymax * h],
+                        coords = [x1, y1, x2, y2],
                     ))
             except Exception:
                 log.exception("[Hailo] Failed to parse flat output format")

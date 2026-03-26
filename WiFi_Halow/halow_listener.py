@@ -21,7 +21,7 @@ LISTEN_BACKLOG    = 5
 
 OUTPUT_DIR        = "/home/pi/Public/WildLife-Detection/Firebase/Images"
 DISK_WARN_BYTES   = 500 * 1024 * 1024
-UPLOAD_TO_FIREBASE = False
+UPLOAD_TO_FIREBASE = True
 
 FIREBASE_CERT     = (
     "/home/pi/Public/WildLife-Detection/Firebase/"
@@ -106,7 +106,7 @@ def initialize_yolo_model(model_path: str, labels_path: str) -> HailoYOLO:
 
 
 def run_detection(model: HailoYOLO, frame, frame_num: int):
-    results    = model(frame, conf=0.50)
+    results    = model(frame, conf=0.35)
     detections = results[0].boxes
     if detections:
         print(f"  Frame {frame_num}: {len(detections)} object(s) detected")
