@@ -30,8 +30,13 @@ const uint32_t RECONNECT_MAX_DELAY   = 30000;
 const int      RECONNECT_MAX         = 8;
 const uint32_t SOCKET_TEARDOWN_MS    = 2000;
 const uint32_t HALOW_LINK_TIMEOUT    = 60000;
-const uint32_t COOLDOWN_MS           = 12000;
-const int      SEND_RETRIES          = 5;
+const uint32_t COOLDOWN_MS        = 12000;
+const int      SEND_RETRIES       = 5;
+const uint32_t PRE_CAPTURE_DELAY_MS = 400;   // let animal move into frame
+const int      BURST_COUNT           = 3;    // frames per motion event
+const uint32_t BURST_INTERVAL_MS     = 600;  // gap between burst frames
+
+
 const uint32_t HEARTBEAT_INTERVAL_MS = 20 * 1000;
 
 
@@ -127,10 +132,16 @@ int wait_for_byte(uint32_t timeout_ms) {
 bool do_handshake() {
   Serial.printf("[Handshake] Identifying as camera '%s'\n", CAM_ID);
 
+  delay(50);
+  while (g_client.available()) {
+    uint8_t stale = g_client.read();
+    Serial.printf("[Handshake] Drained stale byte: 0x%02X\n", stale);
+  }
+  
   uint8_t id_len = (uint8_t)strlen(CAM_ID);
   if (!write_all(&id_len, 1))                      return false;
   if (!write_all((const uint8_t*)CAM_ID, id_len))  return false;
-
+  
   int response = wait_for_byte(CONNECT_TIMEOUT_MS);
   if (response == ACK_BYTE) {
     Serial.println("[Handshake] Pi accepted ✓");
@@ -251,35 +262,39 @@ void send_heartbeat() {
 
 // Capture a frame and upload it with retry.
 void capture_and_send() {
-  Serial.printf("\n[Cam %s] Motion detected: capturing\n", CAM_ID);
+  Serial.printf("\n[Cam %s] Motion detected: burst of %d\n", CAM_ID, BURST_COUNT);
 
-  camera_fb_t* fb = esp_camera_fb_get();
-  if (!fb) {
-    Serial.println("[Cam] Capture failed: no frame returned");
-    return;
-  }
+  // Wait for the animal to move into the centre of the frame
+  delay(PRE_CAPTURE_DELAY_MS);
 
-  bool     ok      = false;
-  uint32_t backoff = 1000;
+  for (int shot = 1; shot <= BURST_COUNT; shot++) {
+    Serial.printf("[Cam %s] Burst frame %d/%d\n", CAM_ID, shot, BURST_COUNT);
 
-  for (int attempt = 1; attempt <= SEND_RETRIES && !ok; attempt++) {
-    Serial.printf("[Cam %s] Send attempt %d/%d  (%u bytes)\n",
-                  CAM_ID, attempt, SEND_RETRIES, fb->len);
-
-    if (!ensure_tcp_connected()) break;
-    ok = send_image(fb->buf, fb->len);
-
-    if (!ok && attempt < SEND_RETRIES) {
-      Serial.printf("[Cam %s] Backing off %u ms before retry\n", CAM_ID, backoff);
-      delay(backoff);
-      backoff = min(backoff * 2, (uint32_t)30000);
+    camera_fb_t* fb = esp_camera_fb_get();
+    if (!fb) {
+      Serial.println("[Cam] Capture failed: no frame");
+      if (shot < BURST_COUNT) delay(BURST_INTERVAL_MS);
+      continue;
     }
+
+    bool     ok      = false;
+    uint32_t backoff = 1000;
+
+    for (int attempt = 1; attempt <= SEND_RETRIES && !ok; attempt++) {
+      if (!ensure_tcp_connected()) break;
+      ok = send_image(fb->buf, fb->len);
+      if (!ok && attempt < SEND_RETRIES) {
+        delay(backoff);
+        backoff = min(backoff * 2, (uint32_t)30000);
+      }
+    }
+
+    Serial.printf("[Cam %s] Frame %d: %s\n", CAM_ID, shot,
+                  ok ? "OK" : "FAILED");
+    esp_camera_fb_return(fb);
+
+    if (shot < BURST_COUNT) delay(BURST_INTERVAL_MS);
   }
-
-  Serial.printf("[Cam %s] %s\n", CAM_ID,
-                ok ? "Upload OK" : "Upload FAILED after all retries");
-
-  esp_camera_fb_return(fb);
 }
 
 
@@ -287,9 +302,7 @@ void setup() {
   Serial.begin(115200);
   
   // PIR needs ~60 s to stabilise after power-on
-  pinMode(PIR_PIN, INPUT_PULLDOWN);
-  gpio_pulldown_en((gpio_num_t)PIR_PIN);
-  gpio_pullup_dis((gpio_num_t)PIR_PIN);
+  pinMode(PIR_PIN, INPUT);
 
 
   Serial.println("[PIR] Waiting for sensor to stabilise...");
@@ -321,7 +334,7 @@ void setup() {
   config.pixel_format = PIXFORMAT_JPEG;
   config.frame_size   = FRAMESIZE_XGA;
   config.fb_location  = CAMERA_FB_IN_PSRAM;
-  config.jpeg_quality = 10;
+  config.jpeg_quality = 8;
   config.grab_mode    = CAMERA_GRAB_LATEST;
   config.fb_count     = 2;
 
@@ -334,6 +347,13 @@ void setup() {
   s->set_vflip(s, 1);
   s->set_brightness(s, 1);
   s->set_saturation(s, 0);
+  s->set_sharpness(s, 2);          // crisper edges on fur/feathers
+  s->set_denoise(s, 1);            // reduces grain in low-light shots
+  s->set_exposure_ctrl(s, 1);      // enable auto-exposure
+  s->set_aec2(s, 1);               // AEC DSP — better exposure in high-contrast scenes
+  s->set_gain_ctrl(s, 1);          // enable auto-gain
+  s->set_awb_gain(s, 1);           // auto white-balance gain
+  s->set_lenc(s, 1);               // lens correction for even illumination
 
   camera_ready = true;
   Serial.printf("[Cam %s] Camera ready\n", CAM_ID);
