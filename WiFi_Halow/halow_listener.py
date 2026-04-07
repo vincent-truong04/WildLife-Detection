@@ -70,17 +70,12 @@ def initialize_firebase():
     return bucket
 
 # Upload annotated frames for this motion event.
-def upload_to_firebase(bucket, detections: list, timestamp: str):
-    if not UPLOAD_TO_FIREBASE or bucket is None or not detections:
-        if not detections:
-            print("  No detections — nothing uploaded to Firebase")
+def upload_to_firebase(bucket, path: str, folder: str, filename: str, timestamp: str):
+    if not UPLOAD_TO_FIREBASE or bucket is None:
         return
-    print(f"  [Firebase] Uploading {len(detections)} frame(s)…")
-    for _, path in detections:
-        filename = os.path.basename(path)
-        blob = bucket.blob(f"detections/{timestamp}/{filename}")
-        blob.upload_from_filename(path)
-        print(f"    Uploaded: {filename}")
+    blob = bucket.blob(f"{folder}/{timestamp}_{filename}")
+    blob.upload_from_filename(path)
+    print(f"    Uploaded to '{folder}/': {timestamp}_{filename}")
     print("  [Firebase] Upload complete ✓")
 
 
@@ -159,18 +154,17 @@ def handle_image(img_data: bytes, cam_id: str, img_num: int,
     with model_lock:
         results, has_detection = run_detection(model, frame, frame_num=1)
 
-    frames_with_detections = []
     if has_detection:
         path = save_annotated(results, frame_num=1,
                               session_dir=session_dir, model=model)
-        frames_with_detections.append((1, path))
-
-    upload_to_firebase(bucket, frames_with_detections, timestamp)
-
-    if frames_with_detections:
-        print("Detection saved")
+        filename = os.path.basename(path)
+        upload_to_firebase(bucket, path, "detected", filename, timestamp)
+        print("Detection saved and uploaded")
     else:
-        print("No objects detected — original saved only")
+        filename = os.path.basename(original_path)
+        upload_to_firebase(bucket, original_path, "empty", filename, timestamp)
+        print("No objects detected — original saved and uploaded")
+
     print(f"{'='*55}\n")
 
 # Wrapper so exceptions in handle_image() are logged
