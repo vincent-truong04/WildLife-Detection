@@ -21,7 +21,7 @@ IPAddress    DNS(192, 168, 100, 1);
 
 // Timing & flow-control 
 const size_t   CHUNK_SIZE            = 2048;
-const uint32_t WRITE_RETRY_DELAY_MS  = 150;
+const uint32_t WRITE_RETRY_DELAY_MS  = 500;
 const int      WRITE_RETRY_MAX       = 10;
 const uint32_t CONNECT_TIMEOUT_MS    = 20000;
 const uint32_t ACK_TIMEOUT_MS        = 25000;
@@ -34,11 +34,14 @@ const uint32_t COOLDOWN_MS        = 12000;
 const int      SEND_RETRIES       = 5;
 const uint32_t PRE_CAPTURE_DELAY_MS = 400;   // let animal move into frame
 const int      BURST_COUNT           = 3;    // frames per motion event
-const uint32_t BURST_INTERVAL_MS     = 600;  // gap between burst frames
+const uint32_t BURST_INTERVAL_MS     = 1500;  // gap between burst frames
 
 
 const uint32_t HEARTBEAT_INTERVAL_MS = 20 * 1000;
 
+// Ignore PIR for this long after any TX, to reject RF-induced false edges
+const uint32_t PIR_BLANK_AFTER_TX_MS = 500;
+unsigned long g_last_tx_ms = 0;
 
 // Protocol Bytes
 const uint8_t ACK_BYTE = 0xAC;
@@ -105,6 +108,7 @@ bool write_all(const uint8_t* buf, size_t len) {
     }
 
     sent += written;
+    yield();
   }
   return true;
 }
@@ -143,6 +147,7 @@ bool do_handshake() {
   if (!write_all((const uint8_t*)CAM_ID, id_len))  return false;
   
   int response = wait_for_byte(CONNECT_TIMEOUT_MS);
+  Serial.printf("[Handshake] Raw response: 0x%02X\n", (uint8_t)response);
   if (response == ACK_BYTE) {
     Serial.println("[Handshake] Pi accepted ✓");
     return true;
@@ -306,7 +311,7 @@ void setup() {
 
 
   Serial.println("[PIR] Waiting for sensor to stabilise...");
-  for (int i = 60; i > 0; i--) {
+  for (int i = 5; i > 0; i--) {
     Serial.printf("[PIR] %d seconds remaining...\n", i);
     delay(1000);
   }
@@ -367,20 +372,37 @@ void setup() {
 
 
 void loop() {
-  bool pir_high    = digitalRead(PIR_PIN) == HIGH;
-  bool cooled_down = (millis() - g_last_trigger_ms) >= COOLDOWN_MS;
+  static bool pir_prev = false;
 
-  // Capture and upload on motion, subject to PIR cooldown
-  if (pir_high && cooled_down && !upload_active) {
-    g_last_trigger_ms = millis();
-    upload_active     = true;
-    capture_and_send();
-    upload_active     = false;
+  bool pir_now      = digitalRead(PIR_PIN) == HIGH;
+  bool rising_edge  = pir_now && !pir_prev;
+  bool cooled_down  = (millis() - g_last_trigger_ms) >= COOLDOWN_MS;
+  bool tx_quiet     = (millis() - g_last_tx_ms) >= PIR_BLANK_AFTER_TX_MS;
+
+  if (rising_edge && cooled_down && tx_quiet && !upload_active) {
+    delay(80);
+    if (digitalRead(PIR_PIN) == HIGH) {
+      Serial.printf("[PIR] Motion @ t=%lu (since_last=%lu ms)\n",
+                    millis(), millis() - g_last_trigger_ms);
+      g_last_trigger_ms = millis();
+      upload_active     = true;
+      capture_and_send();
+      upload_active     = false;
+      g_last_tx_ms      = millis();
+    } else {
+      Serial.println("[PIR] Glitch rejected");
+    }
   }
-  
-  // Send a heartbeat when idle to prevent the session timing out
-  if ((millis() - g_last_sent_ms) >= HEARTBEAT_INTERVAL_MS && !upload_active) {
-    ensure_tcp_connected();
-    send_heartbeat();
+
+  if (tx_quiet) {
+    pir_prev = pir_now;
   }
+
+  // HEARTBEAT DISABLED FOR DEBUGGING — re-enable after testing
+  // if ((millis() - g_last_sent_ms) >= HEARTBEAT_INTERVAL_MS && !upload_active) {
+  //   Serial.println("[HB] === heartbeat firing ===");
+  //   ensure_tcp_connected();
+  //   send_heartbeat();
+  //   g_last_tx_ms = millis();
+  // }
 }
