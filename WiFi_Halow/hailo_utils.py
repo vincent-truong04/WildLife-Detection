@@ -54,10 +54,11 @@ class HailoYOLO:
                 log.warning("[Hailo] Labels file not found: %s — "
                             "using numeric class IDs", labels_path)
                 self.names = {i: str(i) for i in range(80)}
+            
+            self.allowed_classes = {0, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23}
 
             # Open the inference pipeline once at construction time and reuse
             # it for every call — avoids repeated setup/teardown overhead.
-            # __enter__ activates the streams; __exit__ (in __del__) releases them.
             self.infer_pipeline = InferVStreams(
                 self.network_group,
                 self.input_vstream_params,
@@ -79,16 +80,10 @@ class HailoYOLO:
 
     # ══════════════════════════════════════════════════════════════════════════
     #  __call__()
-    #  Run inference on a single BGR frame (as returned by cv2.imread /
-    #  cv2.imdecode).  Returns a list containing one FakeResult so the
-    #  call site can use results[0].boxes and results[0].plot() identically
-    #  to the ultralytics API.
+    #  Run inference on a single BGR frame
     # ══════════════════════════════════════════════════════════════════════════
     def __call__(self, frame, conf: float = 0.45):
         # ── Pre-processing ─────────────────────────────────────────────────────
-        # Letterbox instead of plain resize to preserve aspect ratio.
-        # Squishing a 4:3 frame into a square input distorts animal proportions
-        # and hurts detection.
         fh, fw = frame.shape[:2]
         scale  = min(self.width / fw, self.height / fh)
         nw, nh = int(fw * scale), int(fh * scale)
@@ -108,8 +103,6 @@ class HailoYOLO:
         raw_results = self.infer_pipeline.infer(input_data)
 
         # ── Output parsing ────────────────────────────────────────────────────
-        # The Hailo runtime can return output in two formats depending on the
-        # compiled model variant:
         #
         #   Format A — ragged per-class list:
         #     raw[batch][class_id][detection] → [ymin, xmin, ymax, xmax, score]
@@ -123,6 +116,8 @@ class HailoYOLO:
             if isinstance(raw_output, list) and len(raw_output) > 0:
                 batch = raw_output[0]
                 for cid, dets in enumerate(batch):
+                    if cid not in self.allowed_classes:  
+                        continue
                     for det in dets:
                         if len(det) >= 5 and det[4] > 0.05:
                             print(f"  [DEBUG] class={cid} ({self.names.get(cid,'?')}) "
@@ -145,6 +140,8 @@ class HailoYOLO:
             # ── Format A: ragged per-class output ─────────────────────────────
             batch_0 = raw_output[0]
             for class_id, class_detections in enumerate(batch_0):
+                if class_id not in self.allowed_classes:
+                    continue
                 for det in class_detections:
                     if len(det) < 5:
                         continue
@@ -173,6 +170,9 @@ class HailoYOLO:
                     score = det[4]
                     if score < conf:
                         continue
+                    class_id = int(det[5]) if len(det) > 5 else -1
+                    if class_id not in self.allowed_classes:
+                        continue
                     ymin, xmin, ymax, xmax = det[:4]
                     x1 = (xmin * self.width  - pad_left) / scale
                     y1 = (ymin * self.height - pad_top)  / scale
@@ -191,14 +191,8 @@ class HailoYOLO:
     # ══════════════════════════════════════════════════════════════════════════
     #  _release()
     #  Safely tears down the Hailo pipeline in the correct order.
-    #  Centralised here so both __del__ and the constructor's except block
-    #  call the same cleanup logic.
     # ══════════════════════════════════════════════════════════════════════════
     def _release(self):
-        # FIX: log exceptions instead of swallowing them.
-        # The original bare `except Exception: pass` in __del__ silently hid
-        # real hardware errors (e.g. "device still in use"), making it
-        # impossible to diagnose failed shutdowns.
         for resource, name in [
             (self.ng_activation,  "network group activation"),
             (self.infer_pipeline, "inference pipeline"),
@@ -211,12 +205,6 @@ class HailoYOLO:
 
     def __del__(self):
         self._release()
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-#  Result shims — mimic the ultralytics Results API
-#  so halow_listener.py works without an ultralytics dependency.
-# ══════════════════════════════════════════════════════════════════════════════
 
 class FakeBox:
     """
