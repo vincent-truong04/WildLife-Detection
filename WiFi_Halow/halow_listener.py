@@ -292,9 +292,10 @@ def handle_connection(conn: socket.socket, addr: tuple,
 
         # Detect dead cameras within ~60 s instead of the OS default 2+ hours
         try:
-            conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE,  60)
-            conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 10)
-            conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT,    5)
+            #conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE,  60)
+            #conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 10)
+            #conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT,    5)
+            pass
         except (AttributeError, OSError):
             pass  
 
