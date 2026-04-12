@@ -313,8 +313,8 @@ def handle_connection(conn: socket.socket, addr: tuple,
         conn.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
         # Detect dead cameras within ~60 s instead of the OS default 2+ hours
         try:
-            conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE,  30)
-            conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 10)
+            conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE,  120)
+            conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 30)
             conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT,    3)
         except (AttributeError, OSError) as e:
             print(f"[{addr[0]}] keepalive sockopts not set: {e}")
