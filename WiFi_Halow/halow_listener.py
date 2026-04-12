@@ -4,6 +4,7 @@ import os
 import shutil
 import threading
 import traceback
+import time
 from datetime import datetime
 
 import cv2
@@ -267,6 +268,10 @@ def receive_session(conn, addr, model, bucket):
                   f" ({img_len:,} bytes) from {remote}")
 
             img_data = recv_exact(conn, img_len)
+            if not is_current():
+                return
+            time.sleep(0.05)
+            conn.sendall(ACK)
 
             # Check generation before ACK
             # A newer session may have already started on a different socket.
