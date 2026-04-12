@@ -17,7 +17,7 @@ from firebase_admin import credentials, storage
 HOST              = "0.0.0.0"
 PORT              = 8080
 MAX_IMAGE_BYTES   = 10 * 1024 * 1024   
-RECV_CHUNK_TIMEOUT_S = 30
+RECV_CHUNK_TIMEOUT_S = 300
 LISTEN_BACKLOG    = 5
 
 OUTPUT_DIR        = "/home/pi/Public/WildLife-Detection/Firebase/Images"
