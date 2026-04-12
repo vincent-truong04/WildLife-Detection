@@ -16,7 +16,7 @@ from firebase_admin import credentials, storage
 HOST              = "0.0.0.0"
 PORT              = 8080
 MAX_IMAGE_BYTES   = 10 * 1024 * 1024   
-RECV_CHUNK_TIMEOUT_S = 300
+RECV_CHUNK_TIMEOUT_S = 30
 LISTEN_BACKLOG    = 5
 
 OUTPUT_DIR        = "/home/pi/Public/WildLife-Detection/Firebase/Images"
@@ -181,46 +181,63 @@ class SessionError(Exception):
     """Raised when the session must close due to a protocol violation."""
 
 
-def receive_session(conn: socket.socket, addr: tuple,
-                    model: HailoYOLO, bucket):
+def receive_session(conn, addr, model, bucket):
     remote      = addr[0]
     image_count = 0
     cam_id      = "?"
 
-    # Claim this generation number — any older session thread that checks
-    # is_current() will now see it is superseded and exit immediately.
     with session_lock:
         current_session["gen"] += 1
         my_gen = current_session["gen"]
 
     def is_current():
-        """Returns False if a newer session has taken over."""
         with session_lock:
             return current_session["gen"] == my_gen
 
     try:
-        # Handshake
-        id_len = recv_exact(conn, 1)[0]
-        if id_len == 0:
-            print(f"[{remote}] Handshake: zero-length camera ID — rejecting")
-            conn.sendall(NAK)
+        # ---- Handshake with verbose diagnostics ----
+        print(f"[{remote}] [sess {my_gen}] Awaiting handshake byte...")
+        id_len_byte = recv_exact(conn, 1)
+        id_len = id_len_byte[0]
+        print(f"[{remote}] [sess {my_gen}] Got id_len = 0x{id_len:02X} ({id_len})")
+
+        if id_len == 0 or id_len > 16:
+            print(f"[{remote}] [sess {my_gen}] Bogus id_len {id_len} — sending NAK and closing")
+            try: conn.sendall(NAK)
+            except Exception: pass
             return
 
-        cam_id = recv_exact(conn, id_len).decode("ascii")
-
-        # Drain stale bytes from a previous session so the ESP32 doesn't
-        # mistake leftover ACK/NAK bytes for the handshake response
-        conn.setblocking(False)
+        cam_id_raw = recv_exact(conn, id_len)
         try:
-            while conn.recv(1024):
-                pass
-        except Exception:
+            cam_id = cam_id_raw.decode("ascii")
+        except UnicodeDecodeError:
+            print(f"[{remote}] [sess {my_gen}] Non-ASCII cam_id bytes: {cam_id_raw.hex()} — NAK")
+            try: conn.sendall(NAK)
+            except Exception: pass
+            return
+
+        print(f"[{remote}] [sess {my_gen}] cam_id = '{cam_id}' (raw: {cam_id_raw.hex()})")
+
+        # Drain ONLY if there's clearly leftover data — log everything we drain
+        conn.setblocking(False)
+        drained = bytearray()
+        try:
+            while True:
+                chunk = conn.recv(1024)
+                if not chunk: break
+                drained += chunk
+        except (BlockingIOError, OSError):
             pass
         conn.setblocking(True)
         conn.settimeout(RECV_CHUNK_TIMEOUT_S)
 
-        print(f"[{remote}] Camera '{cam_id}' connected (session {my_gen})")
+        if drained:
+            print(f"[{remote}] [sess {my_gen}] WARNING: drained {len(drained)} stale bytes: "
+                  f"{drained[:32].hex()}{'...' if len(drained)>32 else ''}")
+
+        print(f"[{remote}] [sess {my_gen}] Sending ACK (0x{ACK[0]:02X}) to camera '{cam_id}'")
         conn.sendall(ACK)
+        print(f"[{remote}] [sess {my_gen}] Handshake complete")
 
         #Image receive loop
         while True:
@@ -289,20 +306,16 @@ def handle_connection(conn: socket.socket, addr: tuple,
                       model: HailoYOLO, bucket):
     with conn:
         conn.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
-
         # Detect dead cameras within ~60 s instead of the OS default 2+ hours
         try:
-            #conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE,  60)
-            #conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 10)
-            #conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT,    5)
-            pass
-        except (AttributeError, OSError):
-            pass  
-
+            conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE,  30)
+            conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 10)
+            conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT,    3)
+        except (AttributeError, OSError) as e:
+            print(f"[{addr[0]}] keepalive sockopts not set: {e}")
         # Increase socket buffers for HaLow link headroom
         conn.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 131072)
         conn.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 131072)
-
         conn.settimeout(2)
         receive_session(conn, addr, model, bucket)
 
