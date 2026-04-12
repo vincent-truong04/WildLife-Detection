@@ -20,9 +20,9 @@ IPAddress    DNS(192, 168, 100, 1);
 
 
 // Timing & flow-control 
-const size_t   CHUNK_SIZE            = 2048;
-const uint32_t WRITE_RETRY_DELAY_MS  = 500;
-const int      WRITE_RETRY_MAX       = 10;
+const size_t   CHUNK_SIZE            = 1024;
+const uint32_t WRITE_RETRY_DELAY_MS  = 100;
+const int      WRITE_RETRY_MAX       = 3;
 const uint32_t CONNECT_TIMEOUT_MS    = 20000;
 const uint32_t ACK_TIMEOUT_MS        = 25000;
 const uint32_t RECONNECT_BASE_DELAY  = 1000;
@@ -30,7 +30,7 @@ const uint32_t RECONNECT_MAX_DELAY   = 30000;
 const int      RECONNECT_MAX         = 8;
 const uint32_t SOCKET_TEARDOWN_MS    = 2000;
 const uint32_t HALOW_LINK_TIMEOUT    = 60000;
-const uint32_t COOLDOWN_MS        = 12000;
+const uint32_t COOLDOWN_MS        = 65000;
 const int      SEND_RETRIES       = 5;
 const uint32_t PRE_CAPTURE_DELAY_MS = 400;   // let animal move into frame
 const int      BURST_COUNT           = 3;    // frames per motion event
@@ -40,7 +40,7 @@ const uint32_t BURST_INTERVAL_MS     = 1500;  // gap between burst frames
 const uint32_t HEARTBEAT_INTERVAL_MS = 20 * 1000;
 
 // Ignore PIR for this long after any TX, to reject RF-induced false edges
-const uint32_t PIR_BLANK_AFTER_TX_MS = 500;
+const uint32_t PIR_BLANK_AFTER_TX_MS = 3000;
 unsigned long g_last_tx_ms = 0;
 
 // Protocol Bytes
@@ -109,6 +109,7 @@ bool write_all(const uint8_t* buf, size_t len) {
 
     sent += written;
     yield();
+    delay(2);   // let radio drain between chunks
   }
   return true;
 }
@@ -132,41 +133,83 @@ int wait_for_byte(uint32_t timeout_ms) {
   return g_client.read();
 }
 
-// Send camera ID and wait for Pi acceptance
+// Read up to N bytes within timeout. Returns how many were read.
+int read_bytes(uint8_t* buf, int n, uint32_t timeout_ms) {
+  unsigned long deadline = millis() + timeout_ms;
+  int got = 0;
+  while (got < n && millis() < deadline) {
+    if (g_client.available()) {
+      buf[got++] = g_client.read();
+    } else if (!g_client.connected()) {
+      Serial.println("[TCP] Connection dropped while reading");
+      return got;
+    } else {
+      delay(5);
+    }
+  }
+  return got;
+}
+
 bool do_handshake() {
   Serial.printf("[Handshake] Identifying as camera '%s'\n", CAM_ID);
 
+  // Drain anything sitting in RX before we start
   delay(50);
+  int drained = 0;
   while (g_client.available()) {
-    uint8_t stale = g_client.read();
-    Serial.printf("[Handshake] Drained stale byte: 0x%02X\n", stale);
+    uint8_t b = g_client.read();
+    Serial.printf("[Handshake] Drained pre-byte #%d: 0x%02X\n", ++drained, b);
+    if (drained > 64) break;  // safety
   }
-  
+
   uint8_t id_len = (uint8_t)strlen(CAM_ID);
-  if (!write_all(&id_len, 1))                      return false;
-  if (!write_all((const uint8_t*)CAM_ID, id_len))  return false;
-  
-  int response = wait_for_byte(CONNECT_TIMEOUT_MS);
-  Serial.printf("[Handshake] Raw response: 0x%02X\n", (uint8_t)response);
-  if (response == ACK_BYTE) {
+  Serial.printf("[Handshake] Sending id_len=0x%02X then '%s'\n", id_len, CAM_ID);
+  if (!write_all(&id_len, 1))                     return false;
+  if (!write_all((const uint8_t*)CAM_ID, id_len)) return false;
+  g_client.flush();
+
+  // Read up to 8 bytes — if the Pi sends just ACK, we'll get one byte and
+  // the rest of the buffer stays empty. If something weird is happening,
+  // we'll see it.
+  uint8_t resp[8] = {0};
+  int n = read_bytes(resp, 8, CONNECT_TIMEOUT_MS);
+
+  Serial.printf("[Handshake] Got %d byte(s):", n);
+  for (int i = 0; i < n; i++) Serial.printf(" 0x%02X", resp[i]);
+  Serial.println();
+
+  if (n >= 1 && resp[0] == ACK_BYTE) {
     Serial.println("[Handshake] Pi accepted ✓");
+    // If extra bytes came in, that's a bug we want to know about
+    if (n > 1) {
+      Serial.printf("[Handshake] WARNING: %d extra byte(s) after ACK\n", n - 1);
+    }
     return true;
   }
 
-  Serial.printf("[Handshake] Pi rejected (0x%02X): will retry\n",
-                (uint8_t)response);
+  // Detect TLS Alert record — something in the HaLow stack is injecting
+  // synthetic responses when the real connection isn't established yet.
+  // Signature: first byte 0x15, followed by 0x03 0x03 (TLS 1.2 version).
+  if (n >= 3 && resp[0] == 0x15 && resp[1] == 0x03 && resp[2] == 0x03) {
+    Serial.println("[Handshake] Phantom TLS-alert response — radio stack "
+                   "not ready, waiting before retry");
+    g_tcp_live = false;
+    delay(3000);
+    return false;
+  }
+
+  Serial.printf("[Handshake] Pi rejected (first byte 0x%02X): will retry\n",
+                n >= 1 ? resp[0] : 0xFF);
   g_tcp_live = false;
   return false;
 }
 
-// Ensure the TCP session is live. Reboots after RECONNECT_MAX consecutive failures.
 bool ensure_tcp_connected() {
   if (g_tcp_live && g_client.connected()) return true;
 
-  if (g_client.connected()) {
-    Serial.println("[TCP] Closing stale socket before reconnect");
-    g_client.stop();
-  }
+  // Always tear down, regardless of what connected() says
+  Serial.println("[TCP] Forcing socket teardown before reconnect");
+  g_client.stop();
   delay(SOCKET_TEARDOWN_MS);
   g_tcp_live = false;
 
@@ -175,7 +218,6 @@ bool ensure_tcp_connected() {
   for (int attempt = 1; attempt <= RECONNECT_MAX; attempt++) {
     Serial.printf("[TCP] Reconnect attempt %d/%d → %s:%d\n",
                   attempt, RECONNECT_MAX, HOST, PORT);
-
     halow_connect();
 
     g_client.setTimeout(CONNECT_TIMEOUT_MS);
@@ -188,6 +230,7 @@ bool ensure_tcp_connected() {
       continue;
     }
 
+    Serial.println("[TCP] connect() succeeded — starting handshake");
     if (!do_handshake()) {
       g_client.stop();
       delay(SOCKET_TEARDOWN_MS);
@@ -339,7 +382,7 @@ void setup() {
   config.pixel_format = PIXFORMAT_JPEG;
   config.frame_size   = FRAMESIZE_XGA;
   config.fb_location  = CAMERA_FB_IN_PSRAM;
-  config.jpeg_quality = 8;
+  config.jpeg_quality = 14;
   config.grab_mode    = CAMERA_GRAB_LATEST;
   config.fb_count     = 2;
 
@@ -371,6 +414,16 @@ void setup() {
 }
 
 
+// Returns true if PIR stays HIGH for `required_ms` of consecutive sampling
+bool pir_confirmed(uint32_t required_ms) {
+  unsigned long start = millis();
+  while (millis() - start < required_ms) {
+    if (digitalRead(PIR_PIN) != HIGH) return false;
+    delay(5);
+  }
+  return true;
+}
+
 void loop() {
   static bool pir_prev = false;
 
@@ -380,9 +433,8 @@ void loop() {
   bool tx_quiet     = (millis() - g_last_tx_ms) >= PIR_BLANK_AFTER_TX_MS;
 
   if (rising_edge && cooled_down && tx_quiet && !upload_active) {
-    delay(80);
-    if (digitalRead(PIR_PIN) == HIGH) {
-      Serial.printf("[PIR] Motion @ t=%lu (since_last=%lu ms)\n",
+    if (pir_confirmed(300)) {
+      Serial.printf("[PIR] Motion CONFIRMED @ t=%lu (since_last=%lu ms)\n",
                     millis(), millis() - g_last_trigger_ms);
       g_last_trigger_ms = millis();
       upload_active     = true;
@@ -390,13 +442,11 @@ void loop() {
       upload_active     = false;
       g_last_tx_ms      = millis();
     } else {
-      Serial.println("[PIR] Glitch rejected");
+      Serial.println("[PIR] Glitch rejected (failed 300ms hold)");
     }
   }
 
-  if (tx_quiet) {
-    pir_prev = pir_now;
-  }
+  if (tx_quiet) pir_prev = pir_now;
 
   // HEARTBEAT DISABLED FOR DEBUGGING — re-enable after testing
   // if ((millis() - g_last_sent_ms) >= HEARTBEAT_INTERVAL_MS && !upload_active) {
