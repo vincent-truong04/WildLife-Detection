@@ -1,47 +1,253 @@
-pi@raspberrypi:~ $ sudo journalctl -u halow_listener.service -f
-Apr 12 17:19:57 raspberrypi systemd[1]: Started halow_listener.service - WiFi Halow Wildlife Detection Listener.
-Apr 12 17:20:06 raspberrypi python3[800]: [Firebase] Initialised
-Apr 12 17:20:06 raspberrypi python3[800]: [YOLO] Loading model from /home/pi/Public/WildLife-Detection/WiFi_Halow/yolov8n.hef…
-Apr 12 17:20:06 raspberrypi python3[800]: [Hailo] Loading HEF: /home/pi/Public/WildLife-Detection/WiFi_Halow/yolov8n.hef
-Apr 12 17:20:07 raspberrypi python3[800]: [Hailo] Model ready  (640×640  80 classes)
-Apr 12 17:20:07 raspberrypi python3[800]: [YOLO] Hailo 8L model ready
-Apr 12 17:20:07 raspberrypi python3[800]: [Server] Listening on 0.0.0.0:8080
-Apr 12 17:20:07 raspberrypi python3[800]: [Server] Output: /home/pi/Public/WildLife-Detection/Firebase/Images
-Apr 12 17:20:07 raspberrypi python3[800]: [Server] Chunk timeout: 30 s  Backlog: 5
-Apr 12 17:25:36 raspberrypi python3[800]: [Server] Incoming connection from 192.168.100.116:50555
-Apr 12 17:25:36 raspberrypi python3[800]: [192.168.100.116] [sess 1] Awaiting handshake byte...
-Apr 12 17:25:38 raspberrypi python3[800]: [192.168.100.116] Session timed out after 30 s of inactivity
-Apr 12 17:25:38 raspberrypi python3[800]: [192.168.100.116] Session 1 closed  (received 0 image(s))
-Apr 12 17:25:44 raspberrypi python3[800]: [Server] Incoming connection from 192.168.100.116:50556
-Apr 12 17:25:44 raspberrypi python3[800]: [192.168.100.116] [sess 2] Awaiting handshake byte...
-Apr 12 17:25:46 raspberrypi python3[800]: [192.168.100.116] Session timed out after 30 s of inactivity
-Apr 12 17:25:46 raspberrypi python3[800]: [192.168.100.116] Session 2 closed  (received 0 image(s))
-Apr 12 17:25:56 raspberrypi python3[800]: [Server] Incoming connection from 192.168.100.116:50557
-Apr 12 17:25:56 raspberrypi python3[800]: [192.168.100.116] [sess 3] Awaiting handshake byte...
-Apr 12 17:25:58 raspberrypi python3[800]: [192.168.100.116] Session timed out after 30 s of inactivity
-Apr 12 17:25:58 raspberrypi python3[800]: [192.168.100.116] Session 3 closed  (received 0 image(s))
-Apr 12 17:28:38 raspberrypi python3[800]: [Server] Incoming connection from 192.168.100.116:50428
-Apr 12 17:28:38 raspberrypi python3[800]: [192.168.100.116] [sess 4] Awaiting handshake byte...
-Apr 12 17:28:40 raspberrypi python3[800]: [192.168.100.116] Session timed out after 30 s of inactivity
-Apr 12 17:28:40 raspberrypi python3[800]: [192.168.100.116] Session 4 closed  (received 0 image(s))
-Apr 12 17:28:46 raspberrypi python3[800]: [Server] Incoming connection from 192.168.100.116:50429
-Apr 12 17:28:46 raspberrypi python3[800]: [192.168.100.116] [sess 5] Awaiting handshake byte...
-Apr 12 17:28:48 raspberrypi python3[800]: [192.168.100.116] Session timed out after 30 s of inactivity
-Apr 12 17:28:48 raspberrypi python3[800]: [192.168.100.116] Session 5 closed  (received 0 image(s))
-Apr 12 17:28:58 raspberrypi python3[800]: [Server] Incoming connection from 192.168.100.116:50430
-Apr 12 17:28:58 raspberrypi python3[800]: [192.168.100.116] [sess 6] Awaiting handshake byte...
-Apr 12 17:29:00 raspberrypi python3[800]: [192.168.100.116] Session timed out after 30 s of inactivity
-Apr 12 17:29:00 raspberrypi python3[800]: [192.168.100.116] Session 6 closed  (received 0 image(s))
-Apr 12 17:30:23 raspberrypi python3[800]: [Server] Incoming connection from 192.168.100.116:54025
-Apr 12 17:30:23 raspberrypi python3[800]: [192.168.100.116] [sess 7] Awaiting handshake byte...
-Apr 12 17:30:25 raspberrypi python3[800]: [192.168.100.116] Session timed out after 30 s of inactivity
-Apr 12 17:30:25 raspberrypi python3[800]: [192.168.100.116] Session 7 closed  (received 0 image(s))
-Apr 12 17:33:36 raspberrypi python3[800]: [Server] Incoming connection from 192.168.100.116:64682
-Apr 12 17:33:36 raspberrypi python3[800]: [192.168.100.116] [sess 8] Awaiting handshake byte...
-Apr 12 17:33:38 raspberrypi python3[800]: [192.168.100.116] Session timed out after 30 s of inactivity
-Apr 12 17:33:38 raspberrypi python3[800]: [192.168.100.116] Session 8 closed  (received 0 image(s))
-Apr 12 17:36:48 raspberrypi python3[800]: [Server] Incoming connection from 192.168.100.116:51846
-Apr 12 17:36:48 raspberrypi python3[800]: [192.168.100.116] [sess 9] Awaiting handshake byte...
-Apr 12 17:36:50 raspberrypi python3[800]: [192.168.100.116] Session timed out after 30 s of inactivity
-Apr 12 17:36:50 raspberrypi python3[800]: [192.168.100.116] Session 9 closed  (received 0 image(s))
-
+Apr 12 17:45:22 raspberrypi python3[800]: [Server] Incoming connection from 192.168.100.116:63741
+Apr 12 17:45:22 raspberrypi python3[800]: [192.168.100.116] [sess 10] Awaiting handshake byte...
+Apr 12 17:45:22 raspberrypi python3[800]: [192.168.100.116] [sess 10] Got id_len = 0x01 (1)
+Apr 12 17:45:22 raspberrypi python3[800]: [192.168.100.116] [sess 10] cam_id = 'A' (raw: 41)
+Apr 12 17:45:22 raspberrypi python3[800]: [192.168.100.116] [sess 10] Sending ACK (0xAC) to camera 'A'
+Apr 12 17:45:22 raspberrypi python3[800]: [192.168.100.116] [sess 10] Handshake complete
+Apr 12 17:45:52 raspberrypi python3[800]: [192.168.100.116] Session timed out after 30 s of inactivity
+Apr 12 17:45:52 raspberrypi python3[800]: [192.168.100.116] Session 10 closed  (received 0 image(s))
+Apr 12 17:46:18 raspberrypi python3[800]: [Server] Incoming connection from 192.168.100.116:63742
+Apr 12 17:46:18 raspberrypi python3[800]: [192.168.100.116] [sess 11] Awaiting handshake byte...
+Apr 12 17:46:19 raspberrypi python3[800]: [192.168.100.116] [sess 11] Got id_len = 0x01 (1)
+Apr 12 17:46:19 raspberrypi python3[800]: [192.168.100.116] [sess 11] cam_id = 'A' (raw: 41)
+Apr 12 17:46:19 raspberrypi python3[800]: [192.168.100.116] [sess 11] Sending ACK (0xAC) to camera 'A'
+Apr 12 17:46:19 raspberrypi python3[800]: [192.168.100.116] [sess 11] Handshake complete
+Apr 12 17:46:49 raspberrypi python3[800]: [192.168.100.116] Session timed out after 30 s of inactivity
+Apr 12 17:46:49 raspberrypi python3[800]: [192.168.100.116] Session 11 closed  (received 0 image(s))
+Apr 12 17:48:03 raspberrypi python3[800]: [Server] Incoming connection from 192.168.100.116:63748
+Apr 12 17:48:03 raspberrypi python3[800]: [192.168.100.116] [sess 12] Awaiting handshake byte...
+Apr 12 17:48:03 raspberrypi python3[800]: [192.168.100.116] [sess 12] Got id_len = 0x01 (1)
+Apr 12 17:48:03 raspberrypi python3[800]: [192.168.100.116] [sess 12] cam_id = 'A' (raw: 41)
+Apr 12 17:48:03 raspberrypi python3[800]: [192.168.100.116] [sess 12] Sending ACK (0xAC) to camera 'A'
+Apr 12 17:48:03 raspberrypi python3[800]: [192.168.100.116] [sess 12] Handshake complete
+Apr 12 17:48:23 raspberrypi python3[800]: [Cam A] Receiving image #1  (41,111 bytes) from 192.168.100.116
+Apr 12 17:48:24 raspberrypi python3[800]: =======================================================
+Apr 12 17:48:24 raspberrypi python3[800]: [Cam A] Image #1  41,111 bytes  @ 04_12_2026_174824
+Apr 12 17:48:24 raspberrypi python3[800]: Saving to: /home/pi/Public/WildLife-Detection/Firebase/Images/camA_motion_04_12_2026_174824
+Apr 12 17:48:25 raspberrypi python3[800]:   Frame 1: nothing detected
+Apr 12 17:48:25 raspberrypi python3[800]: [Cam A] Receiving image #2  (40,599 bytes) from 192.168.100.116
+Apr 12 17:48:26 raspberrypi python3[800]: =======================================================
+Apr 12 17:48:26 raspberrypi python3[800]: [Cam A] Image #2  40,599 bytes  @ 04_12_2026_174826
+Apr 12 17:48:26 raspberrypi python3[800]: Saving to: /home/pi/Public/WildLife-Detection/Firebase/Images/camA_motion_04_12_2026_174826
+Apr 12 17:48:26 raspberrypi python3[800]:   Frame 1: nothing detected
+Apr 12 17:48:26 raspberrypi python3[800]:     Uploaded to 'empty/': 04_12_2026_174824_frame_1_original.jpg
+Apr 12 17:48:26 raspberrypi python3[800]:   [Firebase] Upload complete ✓
+Apr 12 17:48:26 raspberrypi python3[800]: No objects detected — original saved and uploaded
+Apr 12 17:48:26 raspberrypi python3[800]: =======================================================
+Apr 12 17:48:27 raspberrypi python3[800]: [Cam A] Receiving image #3  (40,626 bytes) from 192.168.100.116
+Apr 12 17:48:27 raspberrypi python3[800]: =======================================================
+Apr 12 17:48:27 raspberrypi python3[800]: [Cam A] Image #3  40,626 bytes  @ 04_12_2026_174827
+Apr 12 17:48:27 raspberrypi python3[800]: Saving to: /home/pi/Public/WildLife-Detection/Firebase/Images/camA_motion_04_12_2026_174827
+Apr 12 17:48:27 raspberrypi python3[800]:   Frame 1: nothing detected
+Apr 12 17:48:28 raspberrypi python3[800]:     Uploaded to 'empty/': 04_12_2026_174827_frame_1_original.jpg
+Apr 12 17:48:28 raspberrypi python3[800]:   [Firebase] Upload complete ✓
+Apr 12 17:48:28 raspberrypi python3[800]: No objects detected — original saved and uploaded
+Apr 12 17:48:28 raspberrypi python3[800]: =======================================================
+Apr 12 17:48:31 raspberrypi python3[800]:     Uploaded to 'empty/': 04_12_2026_174826_frame_1_original.jpg
+Apr 12 17:48:31 raspberrypi python3[800]:   [Firebase] Upload complete ✓
+Apr 12 17:48:31 raspberrypi python3[800]: No objects detected — original saved and uploaded
+Apr 12 17:48:31 raspberrypi python3[800]: =======================================================
+Apr 12 17:48:46 raspberrypi python3[800]: [Cam A] Receiving image #4  (40,616 bytes) from 192.168.100.116
+Apr 12 17:48:46 raspberrypi python3[800]: =======================================================
+Apr 12 17:48:46 raspberrypi python3[800]: [Cam A] Image #4  40,616 bytes  @ 04_12_2026_174846
+Apr 12 17:48:46 raspberrypi python3[800]: Saving to: /home/pi/Public/WildLife-Detection/Firebase/Images/camA_motion_04_12_2026_174846
+Apr 12 17:48:46 raspberrypi python3[800]:   Frame 1: nothing detected
+Apr 12 17:48:46 raspberrypi python3[800]:     Uploaded to 'empty/': 04_12_2026_174846_frame_1_original.jpg
+Apr 12 17:48:46 raspberrypi python3[800]:   [Firebase] Upload complete ✓
+Apr 12 17:48:46 raspberrypi python3[800]: No objects detected — original saved and uploaded
+Apr 12 17:48:46 raspberrypi python3[800]: =======================================================
+Apr 12 17:48:47 raspberrypi python3[800]: [Cam A] Receiving image #5  (40,745 bytes) from 192.168.100.116
+Apr 12 17:48:48 raspberrypi python3[800]: =======================================================
+Apr 12 17:48:48 raspberrypi python3[800]: [Cam A] Image #5  40,745 bytes  @ 04_12_2026_174848
+Apr 12 17:48:48 raspberrypi python3[800]: Saving to: /home/pi/Public/WildLife-Detection/Firebase/Images/camA_motion_04_12_2026_174848
+Apr 12 17:48:48 raspberrypi python3[800]:   Frame 1: nothing detected
+Apr 12 17:48:48 raspberrypi python3[800]:     Uploaded to 'empty/': 04_12_2026_174848_frame_1_original.jpg
+Apr 12 17:48:48 raspberrypi python3[800]:   [Firebase] Upload complete ✓
+Apr 12 17:48:48 raspberrypi python3[800]: No objects detected — original saved and uploaded
+Apr 12 17:48:48 raspberrypi python3[800]: =======================================================
+Apr 12 17:48:49 raspberrypi python3[800]: [Cam A] Receiving image #6  (40,724 bytes) from 192.168.100.116
+Apr 12 17:48:49 raspberrypi python3[800]: =======================================================
+Apr 12 17:48:49 raspberrypi python3[800]: [Cam A] Image #6  40,724 bytes  @ 04_12_2026_174849
+Apr 12 17:48:49 raspberrypi python3[800]: Saving to: /home/pi/Public/WildLife-Detection/Firebase/Images/camA_motion_04_12_2026_174849
+Apr 12 17:48:49 raspberrypi python3[800]:   Frame 1: nothing detected
+Apr 12 17:48:50 raspberrypi python3[800]:     Uploaded to 'empty/': 04_12_2026_174849_frame_1_original.jpg
+Apr 12 17:48:50 raspberrypi python3[800]:   [Firebase] Upload complete ✓
+Apr 12 17:48:50 raspberrypi python3[800]: No objects detected — original saved and uploaded
+Apr 12 17:48:50 raspberrypi python3[800]: =======================================================
+Apr 12 17:49:19 raspberrypi python3[800]: [192.168.100.116] Session timed out after 30 s of inactivity
+Apr 12 17:49:19 raspberrypi python3[800]: [192.168.100.116] Session 12 closed  (received 6 image(s))
+Apr 12 17:50:10 raspberrypi python3[800]: [Server] Incoming connection from 192.168.100.116:63749
+Apr 12 17:50:10 raspberrypi python3[800]: [192.168.100.116] [sess 13] Awaiting handshake byte...
+Apr 12 17:50:10 raspberrypi python3[800]: [192.168.100.116] [sess 13] Got id_len = 0x01 (1)
+Apr 12 17:50:10 raspberrypi python3[800]: [192.168.100.116] [sess 13] cam_id = 'A' (raw: 41)
+Apr 12 17:50:10 raspberrypi python3[800]: [192.168.100.116] [sess 13] Sending ACK (0xAC) to camera 'A'
+Apr 12 17:50:10 raspberrypi python3[800]: [192.168.100.116] [sess 13] Handshake complete
+Apr 12 17:50:30 raspberrypi python3[800]: [Cam A] Receiving image #1  (40,285 bytes) from 192.168.100.116
+Apr 12 17:50:30 raspberrypi python3[800]: =======================================================
+Apr 12 17:50:30 raspberrypi python3[800]: [Cam A] Image #1  40,285 bytes  @ 04_12_2026_175030
+Apr 12 17:50:30 raspberrypi python3[800]: Saving to: /home/pi/Public/WildLife-Detection/Firebase/Images/camA_motion_04_12_2026_175030
+Apr 12 17:50:30 raspberrypi python3[800]:   Frame 1: nothing detected
+Apr 12 17:50:31 raspberrypi python3[800]:     Uploaded to 'empty/': 04_12_2026_175030_frame_1_original.jpg
+Apr 12 17:50:31 raspberrypi python3[800]:   [Firebase] Upload complete ✓
+Apr 12 17:50:31 raspberrypi python3[800]: No objects detected — original saved and uploaded
+Apr 12 17:50:31 raspberrypi python3[800]: =======================================================
+Apr 12 17:50:32 raspberrypi python3[800]: [Cam A] Receiving image #2  (40,078 bytes) from 192.168.100.116
+Apr 12 17:50:32 raspberrypi python3[800]: =======================================================
+Apr 12 17:50:32 raspberrypi python3[800]: [Cam A] Image #2  40,078 bytes  @ 04_12_2026_175032
+Apr 12 17:50:32 raspberrypi python3[800]: Saving to: /home/pi/Public/WildLife-Detection/Firebase/Images/camA_motion_04_12_2026_175032
+Apr 12 17:50:32 raspberrypi python3[800]:   Frame 1: nothing detected
+Apr 12 17:50:32 raspberrypi python3[800]:     Uploaded to 'empty/': 04_12_2026_175032_frame_1_original.jpg
+Apr 12 17:50:32 raspberrypi python3[800]:   [Firebase] Upload complete ✓
+Apr 12 17:50:32 raspberrypi python3[800]: No objects detected — original saved and uploaded
+Apr 12 17:50:32 raspberrypi python3[800]: =======================================================
+Apr 12 17:50:34 raspberrypi python3[800]: [Cam A] Receiving image #3  (40,138 bytes) from 192.168.100.116
+Apr 12 17:50:34 raspberrypi python3[800]: =======================================================
+Apr 12 17:50:34 raspberrypi python3[800]: [Cam A] Image #3  40,138 bytes  @ 04_12_2026_175034
+Apr 12 17:50:34 raspberrypi python3[800]: Saving to: /home/pi/Public/WildLife-Detection/Firebase/Images/camA_motion_04_12_2026_175034
+Apr 12 17:50:34 raspberrypi python3[800]:   Frame 1: nothing detected
+Apr 12 17:50:34 raspberrypi python3[800]:     Uploaded to 'empty/': 04_12_2026_175034_frame_1_original.jpg
+Apr 12 17:50:34 raspberrypi python3[800]:   [Firebase] Upload complete ✓
+Apr 12 17:50:34 raspberrypi python3[800]: No objects detected — original saved and uploaded
+Apr 12 17:50:34 raspberrypi python3[800]: =======================================================
+Apr 12 17:51:04 raspberrypi python3[800]: [192.168.100.116] Session timed out after 30 s of inactivity
+Apr 12 17:51:04 raspberrypi python3[800]: [192.168.100.116] Session 13 closed  (received 3 image(s))
+Apr 12 17:51:49 raspberrypi python3[800]: [Server] Incoming connection from 192.168.100.116:63750
+Apr 12 17:51:49 raspberrypi python3[800]: [192.168.100.116] [sess 14] Awaiting handshake byte...
+Apr 12 17:51:49 raspberrypi python3[800]: [192.168.100.116] [sess 14] Got id_len = 0x01 (1)
+Apr 12 17:51:49 raspberrypi python3[800]: [192.168.100.116] [sess 14] cam_id = 'A' (raw: 41)
+Apr 12 17:51:49 raspberrypi python3[800]: [192.168.100.116] [sess 14] Sending ACK (0xAC) to camera 'A'
+Apr 12 17:51:49 raspberrypi python3[800]: [192.168.100.116] [sess 14] Handshake complete
+Apr 12 17:52:09 raspberrypi python3[800]: [Cam A] Receiving image #1  (39,973 bytes) from 192.168.100.116
+Apr 12 17:52:09 raspberrypi python3[800]: =======================================================
+Apr 12 17:52:09 raspberrypi python3[800]: [Cam A] Image #1  39,973 bytes  @ 04_12_2026_175209
+Apr 12 17:52:09 raspberrypi python3[800]: Saving to: /home/pi/Public/WildLife-Detection/Firebase/Images/camA_motion_04_12_2026_175209
+Apr 12 17:52:10 raspberrypi python3[800]:   Frame 1: nothing detected
+Apr 12 17:52:10 raspberrypi python3[800]:     Uploaded to 'empty/': 04_12_2026_175209_frame_1_original.jpg
+Apr 12 17:52:10 raspberrypi python3[800]:   [Firebase] Upload complete ✓
+Apr 12 17:52:10 raspberrypi python3[800]: No objects detected — original saved and uploaded
+Apr 12 17:52:10 raspberrypi python3[800]: =======================================================
+Apr 12 17:52:11 raspberrypi python3[800]: [Cam A] Receiving image #2  (39,706 bytes) from 192.168.100.116
+Apr 12 17:52:11 raspberrypi python3[800]: =======================================================
+Apr 12 17:52:11 raspberrypi python3[800]: [Cam A] Image #2  39,706 bytes  @ 04_12_2026_175211
+Apr 12 17:52:11 raspberrypi python3[800]: Saving to: /home/pi/Public/WildLife-Detection/Firebase/Images/camA_motion_04_12_2026_175211
+Apr 12 17:52:11 raspberrypi python3[800]:   Frame 1: nothing detected
+Apr 12 17:52:12 raspberrypi python3[800]:     Uploaded to 'empty/': 04_12_2026_175211_frame_1_original.jpg
+Apr 12 17:52:12 raspberrypi python3[800]:   [Firebase] Upload complete ✓
+Apr 12 17:52:12 raspberrypi python3[800]: No objects detected — original saved and uploaded
+Apr 12 17:52:12 raspberrypi python3[800]: =======================================================
+Apr 12 17:52:13 raspberrypi python3[800]: [Cam A] Receiving image #3  (39,849 bytes) from 192.168.100.116
+Apr 12 17:52:13 raspberrypi python3[800]: =======================================================
+Apr 12 17:52:13 raspberrypi python3[800]: [Cam A] Image #3  39,849 bytes  @ 04_12_2026_175213
+Apr 12 17:52:13 raspberrypi python3[800]: Saving to: /home/pi/Public/WildLife-Detection/Firebase/Images/camA_motion_04_12_2026_175213
+Apr 12 17:52:13 raspberrypi python3[800]:   Frame 1: nothing detected
+Apr 12 17:52:13 raspberrypi python3[800]:     Uploaded to 'empty/': 04_12_2026_175213_frame_1_original.jpg
+Apr 12 17:52:13 raspberrypi python3[800]:   [Firebase] Upload complete ✓
+Apr 12 17:52:13 raspberrypi python3[800]: No objects detected — original saved and uploaded
+Apr 12 17:52:13 raspberrypi python3[800]: =======================================================
+Apr 12 17:52:43 raspberrypi python3[800]: [192.168.100.116] Session timed out after 30 s of inactivity
+Apr 12 17:52:43 raspberrypi python3[800]: [192.168.100.116] Session 14 closed  (received 3 image(s))
+Apr 12 17:54:49 raspberrypi python3[800]: [Server] Incoming connection from 192.168.100.116:63751
+Apr 12 17:54:49 raspberrypi python3[800]: [192.168.100.116] [sess 15] Awaiting handshake byte...
+Apr 12 17:54:49 raspberrypi python3[800]: [192.168.100.116] [sess 15] Got id_len = 0x01 (1)
+Apr 12 17:54:49 raspberrypi python3[800]: [192.168.100.116] [sess 15] cam_id = 'A' (raw: 41)
+Apr 12 17:54:49 raspberrypi python3[800]: [192.168.100.116] [sess 15] Sending ACK (0xAC) to camera 'A'
+Apr 12 17:54:49 raspberrypi python3[800]: [192.168.100.116] [sess 15] Handshake complete
+Apr 12 17:55:09 raspberrypi python3[800]: [Cam A] Receiving image #1  (39,454 bytes) from 192.168.100.116
+Apr 12 17:55:09 raspberrypi python3[800]: =======================================================
+Apr 12 17:55:09 raspberrypi python3[800]: [Cam A] Image #1  39,454 bytes  @ 04_12_2026_175509
+Apr 12 17:55:09 raspberrypi python3[800]: Saving to: /home/pi/Public/WildLife-Detection/Firebase/Images/camA_motion_04_12_2026_175509
+Apr 12 17:55:10 raspberrypi python3[800]:   Frame 1: nothing detected
+Apr 12 17:55:10 raspberrypi python3[800]:     Uploaded to 'empty/': 04_12_2026_175509_frame_1_original.jpg
+Apr 12 17:55:10 raspberrypi python3[800]:   [Firebase] Upload complete ✓
+Apr 12 17:55:10 raspberrypi python3[800]: No objects detected — original saved and uploaded
+Apr 12 17:55:10 raspberrypi python3[800]: =======================================================
+Apr 12 17:55:11 raspberrypi python3[800]: [Cam A] Receiving image #2  (39,306 bytes) from 192.168.100.116
+Apr 12 17:55:11 raspberrypi python3[800]: =======================================================
+Apr 12 17:55:11 raspberrypi python3[800]: [Cam A] Image #2  39,306 bytes  @ 04_12_2026_175511
+Apr 12 17:55:11 raspberrypi python3[800]: Saving to: /home/pi/Public/WildLife-Detection/Firebase/Images/camA_motion_04_12_2026_175511
+Apr 12 17:55:11 raspberrypi python3[800]:   Frame 1: nothing detected
+Apr 12 17:55:12 raspberrypi python3[800]:     Uploaded to 'empty/': 04_12_2026_175511_frame_1_original.jpg
+Apr 12 17:55:12 raspberrypi python3[800]:   [Firebase] Upload complete ✓
+Apr 12 17:55:12 raspberrypi python3[800]: No objects detected — original saved and uploaded
+Apr 12 17:55:12 raspberrypi python3[800]: =======================================================
+Apr 12 17:55:13 raspberrypi python3[800]: [Cam A] Receiving image #3  (39,541 bytes) from 192.168.100.116
+Apr 12 17:55:13 raspberrypi python3[800]: =======================================================
+Apr 12 17:55:13 raspberrypi python3[800]: [Cam A] Image #3  39,541 bytes  @ 04_12_2026_175513
+Apr 12 17:55:13 raspberrypi python3[800]: Saving to: /home/pi/Public/WildLife-Detection/Firebase/Images/camA_motion_04_12_2026_175513
+Apr 12 17:55:13 raspberrypi python3[800]:   Frame 1: nothing detected
+Apr 12 17:55:13 raspberrypi python3[800]:     Uploaded to 'empty/': 04_12_2026_175513_frame_1_original.jpg
+Apr 12 17:55:13 raspberrypi python3[800]:   [Firebase] Upload complete ✓
+Apr 12 17:55:13 raspberrypi python3[800]: No objects detected — original saved and uploaded
+Apr 12 17:55:13 raspberrypi python3[800]: =======================================================
+Apr 12 17:55:43 raspberrypi python3[800]: [192.168.100.116] Session timed out after 30 s of inactivity
+Apr 12 17:55:43 raspberrypi python3[800]: [192.168.100.116] Session 15 closed  (received 3 image(s))
+Apr 12 17:56:49 raspberrypi python3[800]: [Server] Incoming connection from 192.168.100.116:63752
+Apr 12 17:56:49 raspberrypi python3[800]: [192.168.100.116] [sess 16] Awaiting handshake byte...
+Apr 12 17:56:49 raspberrypi python3[800]: [192.168.100.116] [sess 16] Got id_len = 0x01 (1)
+Apr 12 17:56:49 raspberrypi python3[800]: [192.168.100.116] [sess 16] cam_id = 'A' (raw: 41)
+Apr 12 17:56:49 raspberrypi python3[800]: [192.168.100.116] [sess 16] Sending ACK (0xAC) to camera 'A'
+Apr 12 17:56:49 raspberrypi python3[800]: [192.168.100.116] [sess 16] Handshake complete
+Apr 12 17:57:09 raspberrypi python3[800]: [Cam A] Receiving image #1  (39,583 bytes) from 192.168.100.116
+Apr 12 17:57:10 raspberrypi python3[800]: =======================================================
+Apr 12 17:57:10 raspberrypi python3[800]: [Cam A] Image #1  39,583 bytes  @ 04_12_2026_175710
+Apr 12 17:57:10 raspberrypi python3[800]: Saving to: /home/pi/Public/WildLife-Detection/Firebase/Images/camA_motion_04_12_2026_175710
+Apr 12 17:57:10 raspberrypi python3[800]:   Frame 1: nothing detected
+Apr 12 17:57:10 raspberrypi python3[800]:     Uploaded to 'empty/': 04_12_2026_175710_frame_1_original.jpg
+Apr 12 17:57:10 raspberrypi python3[800]:   [Firebase] Upload complete ✓
+Apr 12 17:57:10 raspberrypi python3[800]: No objects detected — original saved and uploaded
+Apr 12 17:57:10 raspberrypi python3[800]: =======================================================
+Apr 12 17:57:11 raspberrypi python3[800]: [Cam A] Receiving image #2  (39,383 bytes) from 192.168.100.116
+Apr 12 17:57:12 raspberrypi python3[800]: =======================================================
+Apr 12 17:57:12 raspberrypi python3[800]: [Cam A] Image #2  39,383 bytes  @ 04_12_2026_175712
+Apr 12 17:57:12 raspberrypi python3[800]: Saving to: /home/pi/Public/WildLife-Detection/Firebase/Images/camA_motion_04_12_2026_175712
+Apr 12 17:57:12 raspberrypi python3[800]:   Frame 1: nothing detected
+Apr 12 17:57:12 raspberrypi python3[800]:     Uploaded to 'empty/': 04_12_2026_175712_frame_1_original.jpg
+Apr 12 17:57:12 raspberrypi python3[800]:   [Firebase] Upload complete ✓
+Apr 12 17:57:12 raspberrypi python3[800]: No objects detected — original saved and uploaded
+Apr 12 17:57:12 raspberrypi python3[800]: =======================================================
+Apr 12 17:57:13 raspberrypi python3[800]: [Cam A] Receiving image #3  (39,442 bytes) from 192.168.100.116
+Apr 12 17:57:13 raspberrypi python3[800]: =======================================================
+Apr 12 17:57:13 raspberrypi python3[800]: [Cam A] Image #3  39,442 bytes  @ 04_12_2026_175713
+Apr 12 17:57:13 raspberrypi python3[800]: Saving to: /home/pi/Public/WildLife-Detection/Firebase/Images/camA_motion_04_12_2026_175713
+Apr 12 17:57:13 raspberrypi python3[800]:   Frame 1: nothing detected
+Apr 12 17:57:14 raspberrypi python3[800]:     Uploaded to 'empty/': 04_12_2026_175713_frame_1_original.jpg
+Apr 12 17:57:14 raspberrypi python3[800]:   [Firebase] Upload complete ✓
+Apr 12 17:57:14 raspberrypi python3[800]: No objects detected — original saved and uploaded
+Apr 12 17:57:14 raspberrypi python3[800]: =======================================================
+Apr 12 17:57:43 raspberrypi python3[800]: [192.168.100.116] Session timed out after 30 s of inactivity
+Apr 12 17:57:43 raspberrypi python3[800]: [192.168.100.116] Session 16 closed  (received 3 image(s))
+Apr 12 17:58:49 raspberrypi python3[800]: [Server] Incoming connection from 192.168.100.116:63753
+Apr 12 17:58:49 raspberrypi python3[800]: [192.168.100.116] [sess 17] Awaiting handshake byte...
+Apr 12 17:58:49 raspberrypi python3[800]: [192.168.100.116] [sess 17] Got id_len = 0x01 (1)
+Apr 12 17:58:49 raspberrypi python3[800]: [192.168.100.116] [sess 17] cam_id = 'A' (raw: 41)
+Apr 12 17:58:49 raspberrypi python3[800]: [192.168.100.116] [sess 17] Sending ACK (0xAC) to camera 'A'
+Apr 12 17:58:49 raspberrypi python3[800]: [192.168.100.116] [sess 17] Handshake complete
+Apr 12 17:59:10 raspberrypi python3[800]: [Cam A] Receiving image #1  (39,487 bytes) from 192.168.100.116
+Apr 12 17:59:10 raspberrypi python3[800]: =======================================================
+Apr 12 17:59:10 raspberrypi python3[800]: [Cam A] Image #1  39,487 bytes  @ 04_12_2026_175910
+Apr 12 17:59:10 raspberrypi python3[800]: Saving to: /home/pi/Public/WildLife-Detection/Firebase/Images/camA_motion_04_12_2026_175910
+Apr 12 17:59:10 raspberrypi python3[800]:   Frame 1: nothing detected
+Apr 12 17:59:10 raspberrypi python3[800]:     Uploaded to 'empty/': 04_12_2026_175910_frame_1_original.jpg
+Apr 12 17:59:10 raspberrypi python3[800]:   [Firebase] Upload complete ✓
+Apr 12 17:59:10 raspberrypi python3[800]: No objects detected — original saved and uploaded
+Apr 12 17:59:10 raspberrypi python3[800]: =======================================================
+Apr 12 17:59:11 raspberrypi python3[800]: [Cam A] Receiving image #2  (39,327 bytes) from 192.168.100.116
+Apr 12 17:59:12 raspberrypi python3[800]: =======================================================
+Apr 12 17:59:12 raspberrypi python3[800]: [Cam A] Image #2  39,327 bytes  @ 04_12_2026_175912
+Apr 12 17:59:12 raspberrypi python3[800]: Saving to: /home/pi/Public/WildLife-Detection/Firebase/Images/camA_motion_04_12_2026_175912
+Apr 12 17:59:12 raspberrypi python3[800]:   Frame 1: nothing detected
+Apr 12 17:59:12 raspberrypi python3[800]:     Uploaded to 'empty/': 04_12_2026_175912_frame_1_original.jpg
+Apr 12 17:59:12 raspberrypi python3[800]:   [Firebase] Upload complete ✓
+Apr 12 17:59:12 raspberrypi python3[800]: No objects detected — original saved and uploaded
+Apr 12 17:59:12 raspberrypi python3[800]: =======================================================
+Apr 12 17:59:13 raspberrypi python3[800]: [Cam A] Receiving image #3  (39,589 bytes) from 192.168.100.116
+Apr 12 17:59:13 raspberrypi python3[800]: =======================================================
+Apr 12 17:59:13 raspberrypi python3[800]: [Cam A] Image #3  39,589 bytes  @ 04_12_2026_175913
+Apr 12 17:59:13 raspberrypi python3[800]: Saving to: /home/pi/Public/WildLife-Detection/Firebase/Images/camA_motion_04_12_2026_175913
+Apr 12 17:59:13 raspberrypi python3[800]:   Frame 1: nothing detected
+Apr 12 17:59:14 raspberrypi python3[800]:     Uploaded to 'empty/': 04_12_2026_175913_frame_1_original.jpg
+Apr 12 17:59:14 raspberrypi python3[800]:   [Firebase] Upload complete ✓
+Apr 12 17:59:14 raspberrypi python3[800]: No objects detected — original saved and uploaded
+Apr 12 17:59:14 raspberrypi python3[800]: =======================================================
+Apr 12 17:59:43 raspberrypi python3[800]: [192.168.100.116] Session timed out after 30 s of inactivity
+Apr 12 17:59:43 raspberrypi python3[800]: [192.168.100.116] Session 17 closed  (received 3 image(s))
