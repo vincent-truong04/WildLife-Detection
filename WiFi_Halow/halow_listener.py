@@ -102,7 +102,7 @@ def initialize_yolo_model(model_path: str, labels_path: str) -> HailoYOLO:
 
 
 def run_detection(model: HailoYOLO, frame, frame_num: int):
-    results    = model(frame, conf=0.20)
+    results    = model(frame, conf=0.15)
     detections = results[0].boxes
     if detections:
         print(f"  Frame {frame_num}: {len(detections)} object(s) detected")
