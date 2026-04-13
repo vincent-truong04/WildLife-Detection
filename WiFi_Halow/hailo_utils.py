@@ -77,12 +77,21 @@ class HailoYOLO:
             log.exception("[Hailo] Initialisation failed — releasing resources")
             self._release()
             raise   # re-raise so the caller knows construction failed
+    
+    def _enhance_frame(self, frame):
+        lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
+        l, a, b = cv2.split(lab)
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        l = clahe.apply(l)
+        enhanced = cv2.merge((l, a, b))
+        return cv2.cvtColor(enhanced, cv2.COLOR_LAB2BGR)
 
     # ══════════════════════════════════════════════════════════════════════════
     #  __call__()
     #  Run inference on a single BGR frame
     # ══════════════════════════════════════════════════════════════════════════
     def __call__(self, frame, conf: float = 0.45):
+        frame = self._enhance_frame(frame)
         # ── Pre-processing ─────────────────────────────────────────────────────
         fh, fw = frame.shape[:2]
         scale  = min(self.width / fw, self.height / fh)
