@@ -7,6 +7,9 @@ import traceback
 import time
 from datetime import datetime
 
+import anthropic
+import base64
+
 import cv2
 import numpy as np
 from hailo_utils import HailoYOLO
@@ -23,6 +26,9 @@ LISTEN_BACKLOG    = 5
 OUTPUT_DIR        = "/home/pi/Public/WildLife-Detection/Firebase/Images"
 DISK_WARN_BYTES   = 500 * 1024 * 1024
 UPLOAD_TO_FIREBASE = True
+
+CLAUDE_MODEL = "claude-sonnet-4-6"
+ANTHROPIC_API_KEY = "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"
 
 FIREBASE_CERT     = (
     "/home/pi/Public/WildLife-Detection/Firebase/"
@@ -92,6 +98,77 @@ def check_disk_space(path: str) -> bool:
         print(f"Could not check disk space on {path}: {e}")
     return True
 
+# Claude API Call
+def identify_with_claude(frame) -> str:
+    print("  [Claude] Sending frame for species identification…")
+    _, buffer = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+    image_b64 = base64.b64encode(buffer).decode("utf-8")
+    try:
+        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        response = client.messages.create(
+            model      = CLAUDE_MODEL,
+            max_tokens = 256,
+            messages   = [{
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image",
+                        "source": {
+                            "type"       : "base64",
+                            "media_type" : "image/jpeg",
+                            "data"       : image_b64,
+                        },
+                    },
+                    {
+                        "type": "text",
+                        "text": (
+                            "You are a wildlife identification assistant. "
+                            "Examine this image and identify all animals present.\n\n"
+                            "Rules:\n"
+                            "• Reply in this exact format and nothing else:\n"
+                            "  COUNT: <number>\n"
+                            "  ANIMALS: <animal1>, <animal2>, ...\n"
+                            "• Be as specific as possible (e.g. 'white-tailed deer' not just 'deer').\n"
+                            "• If the same species appears multiple times, list it once.\n"
+                            "• If no animals are present, reply:\n"
+                            "  COUNT: 0\n"
+                            "  ANIMALS: none"
+                        ),
+                    },
+                ],
+            }],
+        )
+        raw_response = response.content[0].text.strip().lower()
+        print(f"  [Claude] Raw response:\n{raw_response}")
+        count   = 0
+        animals = []
+        for line in raw_response.splitlines():
+            if line.startswith("count:"):
+                try:
+                    count = int(line.split(":")[1].strip())
+                except ValueError:
+                    count = 0
+            elif line.startswith("animals:"):
+                raw_animals = line.split(":")[1].strip()
+                if raw_animals != "none":
+                    animals = [
+                        a.strip()
+                         .replace(" ", "_")
+                         .replace("-", "_")
+                         .replace("'", "")
+                         .replace(".", "")
+                        for a in raw_animals.split(",")
+                    ]
+        safe_label = "_and_".join(animals) if animals else "unknown_animal"
+        print(f"  [Claude] Count  : {count}")
+        print(f"  [Claude] Animals: {animals}")
+        print(f"  [Claude] Label  : '{safe_label}'")
+        return safe_label
+    except Exception:
+        traceback.print_exc()
+        print("  [Claude] Identification failed — falling back to 'unknown_animal'")
+        return "unknown_animal"
+
 
 #  YOLO helpers
 def initialize_yolo_model(model_path: str, labels_path: str) -> HailoYOLO:
@@ -116,13 +193,12 @@ def run_detection(model: HailoYOLO, frame, frame_num: int):
 
 
 def save_annotated(results, frame_num: int, session_dir: str,
-                   model: HailoYOLO) -> str:
-    labels    = sorted({model.names[int(b.cls[0])] for b in results[0].boxes})
-    label_str = "_".join(labels)[:100]
-    filename  = f"frame_{frame_num}_{label_str}.jpg"
-    path      = os.path.join(session_dir, filename)
-    cv2.imwrite(path, results[0].plot())
-    return path
+                   model: HailoYOLO, claude_label: str = None) -> str:
+    if claude_label:
+        label_str = claude_label
+    else:
+        yolo_labels = sorted({model.names[int(b.cls[0])] for b in results[0].boxes})
+        label_str   = "_".join(yolo_labels)[:100]
 
 
 # Decode, run inference, save, and upload. Runs in its own thread after ACK.
