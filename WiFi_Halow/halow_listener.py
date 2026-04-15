@@ -77,12 +77,12 @@ def initialize_firebase():
     return bucket
 
 # Upload annotated frames for this motion event.
-def upload_to_firebase(bucket, path: str, folder: str, filename: str, timestamp: str):
+def upload_to_firebase(bucket, path: str, folder: str, filename: str, timestamp: str, event_folder: str):
     if not UPLOAD_TO_FIREBASE or bucket is None:
         return
-    blob = bucket.blob(f"{folder}/{timestamp}_{filename}")
+    blob = bucket.blob(f"{folder}/{event_folder}/{filename}")
     blob.upload_from_filename(path)
-    print(f"    Uploaded to '{folder}/': {timestamp}_{filename}")
+    print(f"    Uploaded to '{folder}/{event_folder}/': {filename}")
     print("  [Firebase] Upload complete ✓")
 
 
@@ -199,13 +199,15 @@ def save_annotated(results, frame_num: int, session_dir: str,
     else:
         yolo_labels = sorted({model.names[int(b.cls[0])] for b in results[0].boxes})
         label_str   = "_".join(yolo_labels)[:100]
+    filename = f"frame_{frame_num}_{label_str}.jpg"
+    path     = os.path.join(session_dir, filename)
+    cv2.imwrite(path, results[0].plot())
+    return path
 
 
 # Decode, run inference, save, and upload. Runs in its own thread after ACK.
 def handle_image(img_data: bytes, cam_id: str, img_num: int,
-                 model: HailoYOLO, bucket):
-    timestamp   = datetime.now().strftime("%m_%d_%Y_%H%M%S")
-    session_dir = os.path.join(OUTPUT_DIR, f"cam{cam_id}_motion_{timestamp}")
+                 model: HailoYOLO, bucket, session_dir: str, timestamp: str):
 
     print(f"\n{'='*55}")
     print(f"[Cam {cam_id}] Image #{img_num}  {len(img_data):,} bytes  @ {timestamp}")
@@ -225,29 +227,33 @@ def handle_image(img_data: bytes, cam_id: str, img_num: int,
         print(f"{'='*55}\n")
         return
 
-    original_path = os.path.join(session_dir, "frame_1_original.jpg")
+    original_path = os.path.join(session_dir, f"frame_{img_num}_original.jpg")
     cv2.imwrite(original_path, frame)
 
     with model_lock:
-        results, has_detection = run_detection(model, frame, frame_num=1)
+        results, has_detection = run_detection(model, frame, frame_num=img_num)
 
     if has_detection:
-        path = save_annotated(results, frame_num=1,
-                              session_dir=session_dir, model=model)
+        claude_label = identify_with_claude(frame)
+        path = save_annotated(results, frame_num=img_num,
+                              session_dir=session_dir, model=model,
+                              claude_label=claude_label)
         filename = os.path.basename(path)
-        upload_to_firebase(bucket, path, "detected", filename, timestamp)
+        upload_to_firebase(bucket, path, "detected", filename, timestamp,
+                           os.path.basename(session_dir))
         print("Detection saved and uploaded")
     else:
         filename = os.path.basename(original_path)
-        upload_to_firebase(bucket, original_path, "empty", filename, timestamp)
+        upload_to_firebase(bucket, original_path, "empty", filename, timestamp,
+                           os.path.basename(session_dir))
         print("No objects detected — original saved and uploaded")
 
     print(f"{'='*55}\n")
 
 # Wrapper so exceptions in handle_image() are logged
-def _safe_handle_image(img_data, cam_id, img_num, model, bucket):
+def _safe_handle_image(img_data, cam_id, img_num, model, bucket, session_dir, timestamp):
     try:
-        handle_image(img_data, cam_id, img_num, model, bucket)
+        handle_image(img_data, cam_id, img_num, model, bucket, session_dir, timestamp)
     except Exception as e:
         print(f"[Cam {cam_id}] handle_image() raised an exception: {e}")
         traceback.print_exc()
@@ -263,6 +269,11 @@ def receive_session(conn, addr, model, bucket):
     image_count = 0
     cam_id      = "?"
 
+    EVENT_GAP_S     = 10
+    event_dir       = None
+    event_timestamp = None
+    last_image_time = 0.0
+
     with session_lock:
         current_session["gen"] += 1
         my_gen = current_session["gen"]
@@ -272,7 +283,6 @@ def receive_session(conn, addr, model, bucket):
             return current_session["gen"] == my_gen
 
     try:
-        # ---- Handshake with verbose diagnostics ----
         print(f"[{remote}] [sess {my_gen}] Awaiting handshake byte...")
         id_len_byte = recv_exact(conn, 1)
         id_len = id_len_byte[0]
@@ -295,7 +305,6 @@ def receive_session(conn, addr, model, bucket):
 
         print(f"[{remote}] [sess {my_gen}] cam_id = '{cam_id}' (raw: {cam_id_raw.hex()})")
 
-        # Drain ONLY if there's clearly leftover data — log everything we drain
         conn.setblocking(False)
         drained = bytearray()
         try:
@@ -316,7 +325,6 @@ def receive_session(conn, addr, model, bucket):
         conn.sendall(ACK)
         print(f"[{remote}] [sess {my_gen}] Handshake complete")
 
-        #Image receive loop
         while True:
             if not is_current():
                 print(f"[Cam {cam_id}] Session {my_gen} superseded — exiting")
@@ -325,7 +333,6 @@ def receive_session(conn, addr, model, bucket):
             raw_len = recv_exact(conn, 4)
             img_len = struct.unpack("<I", raw_len)[0]
 
-            # Zero-length frame = heartbeat ping
             if img_len == 0:
                 if not is_current():
                     return
@@ -333,7 +340,6 @@ def receive_session(conn, addr, model, bucket):
                 print(f"[Cam {cam_id}] Heartbeat")
                 continue
 
-            # Stream misalignment
             if img_len > MAX_IMAGE_BYTES:
                 print(f"[Cam {cam_id}] Invalid image length {img_len} "
                       f"(max {MAX_IMAGE_BYTES}) — closing session")
@@ -347,20 +353,24 @@ def receive_session(conn, addr, model, bucket):
             if not is_current():
                 return
             time.sleep(0.05)
-            conn.sendall(ACK)
 
-            # Check generation before ACK
-            # A newer session may have already started on a different socket.
             if not is_current():
                 print(f"[Cam {cam_id}] Session {my_gen} superseded before ACK — exiting")
                 return
             conn.sendall(ACK)
             image_count += 1
 
-            # Dispatch to a thread so we can receive the next image immediately
+            now = time.time()
+            if event_dir is None or (now - last_image_time) > EVENT_GAP_S:
+                event_timestamp = datetime.now().strftime("%m_%d_%Y_%H%M%S")
+                event_dir       = os.path.join(OUTPUT_DIR, f"cam{cam_id}_motion_{event_timestamp}")
+                os.makedirs(event_dir, exist_ok=True)
+                print(f"[Cam {cam_id}] New event folder: {event_dir}")
+            last_image_time = now
+
             threading.Thread(
                 target=_safe_handle_image,
-                args=(img_data, cam_id, image_count, model, bucket),
+                args=(img_data, cam_id, image_count, model, bucket, event_dir, event_timestamp),
                 daemon=True,
             ).start()
 
