@@ -407,7 +407,7 @@ def handle_connection(conn: socket.socket, addr: tuple,
         # Increase socket buffers for HaLow link headroom
         conn.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 131072)
         conn.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 131072)
-        conn.settimeout(2)
+        conn.settimeout(30)
         receive_session(conn, addr, model, bucket)
 
 
