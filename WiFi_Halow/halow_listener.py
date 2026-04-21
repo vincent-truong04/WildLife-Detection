@@ -36,7 +36,7 @@ FIREBASE_CERT     = (
 )
 FIREBASE_BUCKET   = "real-time-wildlife-detector.firebasestorage.app"
 
-MODEL_PATH        = os.path.join(os.path.dirname(__file__), "yolov8n.hef")
+MODEL_PATH        = os.path.join(os.path.dirname(__file__), "yolov8s.hef")
 LABELS_PATH       = "/home/pi/Public/WildLife-Detection/YOLOv8n/coco.txt"
 
 # Protocol bytes
@@ -239,9 +239,15 @@ def handle_image(img_data: bytes, cam_id: str, img_num: int,
                               session_dir=session_dir, model=model,
                               claude_label=claude_label)
         filename = os.path.basename(path)
-        upload_to_firebase(bucket, path, "detected", filename, timestamp,
+        if claude_label == "unknown_animal":
+            filename = os.path.basename(original_path)
+            upload_to_firebase(bucket, original_path, "empty", filename, timestamp,
                            os.path.basename(session_dir))
-        print("Detection saved and uploaded")
+            print("Unknown animal — uploaded to empty folder")
+        else:
+            upload_to_firebase(bucket, path, "detected", filename, timestamp,
+                           os.path.basename(session_dir))
+            print("Detection saved and uploaded")
     else:
         filename = os.path.basename(original_path)
         upload_to_firebase(bucket, original_path, "empty", filename, timestamp,
