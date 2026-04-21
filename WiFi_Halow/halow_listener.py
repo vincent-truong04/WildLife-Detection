@@ -16,6 +16,9 @@ from hailo_utils import HailoYOLO
 import firebase_admin
 from firebase_admin import credentials, storage
 
+import smtplib
+from email.mime.text import MIMEText
+
 #Config
 HOST              = "0.0.0.0"
 PORT              = 8080
@@ -39,6 +42,14 @@ FIREBASE_BUCKET   = "real-time-wildlife-detector.firebasestorage.app"
 MODEL_PATH        = os.path.join(os.path.dirname(__file__), "yolov8s.hef")
 LABELS_PATH       = "/home/pi/Public/WildLife-Detection/YOLOv8n/coco.txt"
 
+GMAIL_ADDRESS      = "vincenttruong.usa@gmail.com"
+GMAIL_APP_PASSWORD = "ncvvcnqyxvdkstlm"
+ALERT_TO_ADDRESS   = "vincenttruong.usa@gmail.com"
+SMS_ENABLED        = False
+SMS_COOLDOWN_S     = 60
+_sms_last_sent: dict[str, float] = {}
+_sms_lock = threading.Lock()
+
 # Protocol bytes
 ACK = bytes([0xAC])
 NAK = bytes([0x00])
@@ -50,7 +61,47 @@ model_lock = threading.Lock()
 session_lock    = threading.Lock()
 current_session = {"gen": 0}
 
-
+#SMS Helper
+def send_sms_alert(cam_id: str, labels: list[str], timestamp: str):
+    """
+    Send an SMS via Gmail SMTP → AT&T email-to-SMS gateway.
+    Respects per-camera cooldown to avoid flooding.
+    """
+    if not SMS_ENABLED:
+        return
+ 
+    now = time.monotonic()
+    with _sms_lock:
+        last = _sms_last_sent.get(cam_id, 0.0)
+        if now - last < SMS_COOLDOWN_S:
+            remaining = SMS_COOLDOWN_S - (now - last)
+            print(f"[SMS] Suppressed for cam {cam_id} "
+                  f"(cooldown: {remaining:.0f}s remaining)")
+            return
+        _sms_last_sent[cam_id] = now
+ 
+    label_str = ", ".join(labels) if labels else "unknown"
+    body = (
+        f"Wildlife detected!\n"
+        f"Cam: {cam_id}\n"
+        f"Objects: {label_str}\n"
+        f"Time: {timestamp}"
+    )
+ 
+    try:
+        msg = MIMEText(body)
+        msg["From"]    = GMAIL_ADDRESS
+        msg["To"]      = ALERT_TO_ADDRESS
+        msg["Subject"] = "Wildlife Detected!"
+ 
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+            server.login(GMAIL_ADDRESS, GMAIL_APP_PASSWORD)
+            server.sendmail(GMAIL_ADDRESS, ALERT_TO_ADDRESS, msg.as_string())
+ 
+        print(f"[SMS] Sent to {ALERT_TO_ADDRESS}  cam={cam_id}  labels={label_str}")
+ 
+    except Exception as e:
+        print(f"[SMS] Failed to send: {e}")
 
 # Read exactly n bytes, looping over partial TCP segments.
 def recv_exact(conn: socket.socket, n: int) -> bytes:
@@ -99,7 +150,7 @@ def check_disk_space(path: str) -> bool:
     return True
 
 # Claude API Call
-def identify_with_claude(frame) -> str:
+def identify_with_claude(frame) -> tuple[str, float]:
     print("  [Claude] Sending frame for species identification…")
     _, buffer = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
     image_b64 = base64.b64encode(buffer).decode("utf-8")
@@ -128,11 +179,15 @@ def identify_with_claude(frame) -> str:
                             "• Reply in this exact format and nothing else:\n"
                             "  COUNT: <number>\n"
                             "  ANIMALS: <animal1>, <animal2>, ...\n"
+                            "  CONFIDENCE: <0.00–1.00>\n"
+                            "• CONFIDENCE is your overall certainty in the identification "
+                            "(1.00 = certain, 0.00 = no idea).\n"
                             "• Be as specific as possible (e.g. 'white-tailed deer' not just 'deer').\n"
                             "• If the same species appears multiple times, list it once.\n"
                             "• If no animals are present, reply:\n"
                             "  COUNT: 0\n"
-                            "  ANIMALS: none"
+                            "  ANIMALS: none\n"
+                            "  CONFIDENCE: 1.00"
                         ),
                     },
                 ],
@@ -140,9 +195,13 @@ def identify_with_claude(frame) -> str:
         )
         raw_response = response.content[0].text.strip().lower()
         print(f"  [Claude] Raw response:\n{raw_response}")
-        count   = 0
-        animals = []
+
+        count      = 0
+        animals    = []
+        confidence = 0.0
+
         for line in raw_response.splitlines():
+            line = line.strip()
             if line.startswith("count:"):
                 try:
                     count = int(line.split(":")[1].strip())
@@ -159,15 +218,26 @@ def identify_with_claude(frame) -> str:
                          .replace(".", "")
                         for a in raw_animals.split(",")
                     ]
+            elif line.startswith("confidence:"):
+                try:
+                    confidence = float(line.split(":")[1].strip())
+                    confidence = max(0.0, min(1.0, confidence))  # clamp to [0, 1]
+                except ValueError:
+                    confidence = 0.0
+
         safe_label = "_and_".join(animals) if animals else "unknown_animal"
-        print(f"  [Claude] Count  : {count}")
-        print(f"  [Claude] Animals: {animals}")
-        print(f"  [Claude] Label  : '{safe_label}'")
-        return safe_label
+
+        print(f"  [Claude] Count     : {count}")
+        print(f"  [Claude] Animals   : {animals}")
+        print(f"  [Claude] Label     : '{safe_label}'")
+        print(f"  [Claude] Confidence: {confidence:.2f}")
+
+        return safe_label, confidence
+
     except Exception:
         traceback.print_exc()
         print("  [Claude] Identification failed — falling back to 'unknown_animal'")
-        return "unknown_animal"
+        return "unknown_animal", 0.0
 
 
 #  YOLO helpers
@@ -193,19 +263,19 @@ def run_detection(model: HailoYOLO, frame, frame_num: int):
 
 
 def save_annotated(results, frame_num: int, session_dir: str,
-                   model: HailoYOLO, claude_label: str = None) -> str:
-    if claude_label:
-        label_str = claude_label
-    else:
-        yolo_labels = sorted({model.names[int(b.cls[0])] for b in results[0].boxes})
-        label_str   = "_".join(yolo_labels)[:100]
-    filename = f"frame_{frame_num}_{label_str}.jpg"
-    path     = os.path.join(session_dir, filename)
+                   model: HailoYOLO, claude_label: str = None,
+                   confidence: float = None) -> str:
+    label_str = claude_label if claude_label else (
+        "_".join(sorted({model.names[int(b.cls[0])] for b in results[0].boxes}))[:100]
+    )
+    # Append confidence to filename if provided
+    conf_str  = f"_conf{confidence:.2f}" if confidence is not None else ""
+    filename  = f"frame_{frame_num}_{label_str}{conf_str}.jpg"
+    path      = os.path.join(session_dir, filename)
     cv2.imwrite(path, results[0].plot())
     return path
 
 
-# Decode, run inference, save, and upload. Runs in its own thread after ACK.
 def handle_image(img_data: bytes, cam_id: str, img_num: int,
                  model: HailoYOLO, bucket, session_dir: str, timestamp: str):
 
@@ -234,20 +304,23 @@ def handle_image(img_data: bytes, cam_id: str, img_num: int,
         results, has_detection = run_detection(model, frame, frame_num=img_num)
 
     if has_detection:
-        claude_label = identify_with_claude(frame)
-        path = save_annotated(results, frame_num=img_num,
-                              session_dir=session_dir, model=model,
-                              claude_label=claude_label)
-        filename = os.path.basename(path)
+        claude_label, confidence = identify_with_claude(frame)
+
         if claude_label == "unknown_animal":
             filename = os.path.basename(original_path)
             upload_to_firebase(bucket, original_path, "empty", filename, timestamp,
-                           os.path.basename(session_dir))
+                               os.path.basename(session_dir))
             print("Unknown animal — uploaded to empty folder")
         else:
+            path     = save_annotated(results, frame_num=img_num,
+                                      session_dir=session_dir, model=model,
+                                      claude_label=claude_label,
+                                      confidence=confidence)          # ← pass confidence
+            filename = os.path.basename(path)
             upload_to_firebase(bucket, path, "detected", filename, timestamp,
-                           os.path.basename(session_dir))
-            print("Detection saved and uploaded")
+                               os.path.basename(session_dir))
+            print(f"Detection saved and uploaded  (conf={confidence:.2f})")
+            send_sms_alert(cam_id, claude_label.split("_and_"), timestamp)
     else:
         filename = os.path.basename(original_path)
         upload_to_firebase(bucket, original_path, "empty", filename, timestamp,
