@@ -1,0 +1,133 @@
+/* Basic Reset */
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+/* --- Global Background & Theme --- */
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background-color: #eef2ec; /* Soft, tame sage green background */
+  color: #2c3e2e; /* Dark forest green text */
+}
+
+/* --- Container & Centering --- */
+.container {
+  max-width: 1200px;
+  margin: 0 auto; /* This perfectly centers the page on large screens */
+  padding: 40px 20px;
+}
+
+header {
+  margin-bottom: 40px;
+  background-color: #ffffff; /* Gives the header area a clean white box */
+  padding: 30px;
+  border-radius: 12px;
+  box-shadow: 0 4px 6px rgba(0,0,0,0.05); /* Subtle shadow for depth */
+  
+  /* Flexbox guarantees everything inside centers perfectly */
+  display: flex;
+  flex-direction: column;
+  align-items: center; 
+  text-align: center;
+}
+
+header h1 {
+  font-size: 2.5rem;
+  color: #2c3e2e;
+  margin-bottom: 10px;
+}
+
+/* Dropdown Menu Styling */
+.folder-select {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  margin: 15px 0;
+}
+
+/* The Grid Layout */
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 25px;
+}
+
+/* Card Styling */
+.card {
+  background: white;
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.card:hover {
+  transform: translateY(-5px);
+  box-shadow: 0 8px 15px rgba(0,0,0,0.1);
+}
+
+.card img {
+  width: 100%;
+  height: 220px;
+  object-fit: cover; /* Ensures images don't stretch weirdly */
+  background-color: #eef2ec;
+  display: block; /* Removes weird bottom spacing under images */
+}
+
+.info {
+  padding: 15px;
+  border-top: 1px solid #eef2ec;
+}
+
+.date {
+  font-weight: bold;
+  color: #4a5d4e; /* Softer green-gray */
+  margin-bottom: 4px;
+}
+
+.filename {
+  font-size: 0.85rem;
+  color: #7a8b7d;
+  word-break: break-all;
+}
+
+.loading {
+  text-align: center;
+  font-size: 1.2rem;
+  color: #4a5d4e;
+  margin-top: 50px;
+}
+
+/* --- Modal Styles --- */
+.modal {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  position: fixed;
+  z-index: 1000; /* Makes sure it sits on top of everything else */
+  left: 0;
+  top: 0;
+  width: 100vw;
+  height: 100vh;
+  background-color: rgba(0, 0, 0, 0.85); /* Dark semi-transparent background */
+  cursor: pointer; /* Clicking anywhere closes it */
+}
+
+.modal-content {
+  max-width: 90%;
+  max-height: 90%;
+  border-radius: 8px;
+  box-shadow: 0 8px 16px rgba(0,0,0,0.5);
+}
+
+.close-btn {
+  position: absolute;
+  top: 20px;
+  right: 40px;
+  color: #fff;
+  font-size: 40px;
+  font-weight: bold;
+  cursor: pointer;
+}
+
+.close-btn:hover {
+  color: #ccc;
+}
