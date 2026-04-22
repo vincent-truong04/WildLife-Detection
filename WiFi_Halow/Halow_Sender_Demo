@@ -32,7 +32,7 @@ const int      SEND_RETRIES          = 5;
 
 
 // CAPTURE RHYTHM — timer-based for demo
-const uint32_t CAPTURE_INTERVAL_MS   = 15000;   // 15s between captures
+const uint32_t CAPTURE_INTERVAL_MS   = 30000;   // 15s between captures
 const int      BURST_COUNT           = 1;
 const uint32_t BURST_INTERVAL_MS     = 1500;
 
@@ -331,7 +331,7 @@ void setup() {
   config.pin_sscb_scl = SIOC_GPIO_NUM;
   config.pin_pwdn     = PWDN_GPIO_NUM;
   config.pin_reset    = RESET_GPIO_NUM;
-  config.xclk_freq_hz = 20000000;
+  config.xclk_freq_hz = 10000000;
   config.pixel_format = PIXFORMAT_JPEG;
   config.frame_size   = FRAMESIZE_UXGA;
   config.fb_location  = CAMERA_FB_IN_PSRAM;
