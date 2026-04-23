@@ -39,7 +39,7 @@ FIREBASE_CERT     = (
 )
 FIREBASE_BUCKET   = "real-time-wildlife-detector.firebasestorage.app"
 
-MODEL_PATH        = os.path.join(os.path.dirname(__file__), "yolov8s.hef")
+MODEL_PATH        = os.path.join(os.path.dirname(__file__), "yolov8n.hef")
 LABELS_PATH       = "/home/pi/Public/WildLife-Detection/YOLOv8n/coco.txt"
 
 GMAIL_ADDRESS      = "vincenttruong.usa@gmail.com"
@@ -174,11 +174,11 @@ def identify_with_claude(frame) -> tuple[str, float]:
                         "type": "text",
                         "text": (
                             "You are a wildlife identification assistant. "
-                            "Examine this image and identify all animals present.\n\n"
+                            "Examine this image and identify all animals AND humans present.\n\n"
                             "Rules:\n"
                             "• Reply in this exact format and nothing else:\n"
                             "  COUNT: <number>\n"
-                            "  ANIMALS: <animal1>, <animal2>, ...\n"
+                            "  ANIMALS: <animal1>, <animal2>, ... (or 'human' / 'person' for people)\n"
                             "  CONFIDENCE: <0.00–1.00>\n"
                             "• CONFIDENCE is your overall certainty in the identification "
                             "(1.00 = certain, 0.00 = no idea).\n"
@@ -249,7 +249,7 @@ def initialize_yolo_model(model_path: str, labels_path: str) -> HailoYOLO:
 
 
 def run_detection(model: HailoYOLO, frame, frame_num: int):
-    results    = model(frame, conf=0.15)
+    results    = model(frame, conf=0.01)
     detections = results[0].boxes
     if detections:
         print(f"  Frame {frame_num}: {len(detections)} object(s) detected")
