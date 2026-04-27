@@ -37,7 +37,7 @@ FIREBASE_CERT     = ("FIREBASE_CERT_FILE")
 FIREBASE_BUCKET   = "FIREBASE_PROJECT_BUCKET"
 
 MODEL_PATH        = os.path.join(os.path.dirname(__file__), "yolov8s.hef")
-LABELS_PATH       = "/home/pi/Public/WildLife-Detection/YOLOv8n/coco.txt"
+LABELS_PATH       = "/home/pi/Public/WildLife-Detection/YOLOv8s/coco.txt"
 
 GMAIL_ADDRESS      = "SEND_FROM_EMAIL"
 GMAIL_APP_PASSWORD = "EMAIL_APP_PASSWORD"
