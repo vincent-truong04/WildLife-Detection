@@ -2,8 +2,10 @@
 #include <HaLow.h>
 
 
+
 //  PER-UNIT CONFIGURATION
 const char*  CAM_ID   = "A";
+const int    PIR_PIN  = 1;
 IPAddress    LOCAL_IP(192, 168, 100, 116);   // unique per unit
 
 
@@ -17,25 +19,29 @@ IPAddress    SUBNET(255, 255, 255, 0);
 IPAddress    DNS(192, 168, 100, 1);
 
 
-// Timing & flow-control  (matches known-working old firmware)
-const size_t   CHUNK_SIZE            = 512;
+// Timing & flow-control 
+const size_t   CHUNK_SIZE            = 1024;
 const uint32_t WRITE_RETRY_DELAY_MS  = 100;
-const int      WRITE_RETRY_MAX       = 20;
+const int      WRITE_RETRY_MAX       = 3;
 const uint32_t CONNECT_TIMEOUT_MS    = 20000;
-const uint32_t ACK_TIMEOUT_MS        = 45000;
+const uint32_t ACK_TIMEOUT_MS        = 25000;
 const uint32_t RECONNECT_BASE_DELAY  = 1000;
 const uint32_t RECONNECT_MAX_DELAY   = 30000;
 const int      RECONNECT_MAX         = 8;
 const uint32_t SOCKET_TEARDOWN_MS    = 2000;
 const uint32_t HALOW_LINK_TIMEOUT    = 60000;
-const int      SEND_RETRIES          = 5;
+const uint32_t COOLDOWN_MS        = 65000;
+const int      SEND_RETRIES       = 5;
+const uint32_t PRE_CAPTURE_DELAY_MS = 400;   // let animal move into frame
+const int      BURST_COUNT           = 3;    // frames per motion event
+const uint32_t BURST_INTERVAL_MS     = 1500;  // gap between burst frames
 
 
-// CAPTURE RHYTHM — timer-based for demo
-const uint32_t CAPTURE_INTERVAL_MS   = 30000;   // 15s between captures
-const int      BURST_COUNT           = 1;
-const uint32_t BURST_INTERVAL_MS     = 1500;
+const uint32_t HEARTBEAT_INTERVAL_MS = 20 * 1000;
 
+// Ignore PIR for this long after any TX, to reject RF-induced false edges
+const uint32_t PIR_BLANK_AFTER_TX_MS = 3000;
+unsigned long g_last_tx_ms = 0;
 
 // Protocol Bytes
 const uint8_t ACK_BYTE = 0xAC;
@@ -44,12 +50,12 @@ const uint8_t NAK_BYTE = 0x00;
 
 // Runtime state
 bool          camera_ready      = false;
-unsigned long g_last_capture_ms = 0;
+bool          upload_active     = false;
+unsigned long g_last_trigger_ms = 0;
 
 HalowClient   g_client;
 bool          g_tcp_live        = false;
 unsigned long g_last_sent_ms    = 0;
-
 
 // Block until HaLow associates or timeout
 void halow_connect() {
@@ -103,7 +109,7 @@ bool write_all(const uint8_t* buf, size_t len) {
 
     sent += written;
     yield();
-    delay(5);   // let radio drain between chunks (same as old working code)
+    delay(2);   // let radio drain between chunks
   }
   return true;
 }
@@ -153,7 +159,7 @@ bool do_handshake() {
   while (g_client.available()) {
     uint8_t b = g_client.read();
     Serial.printf("[Handshake] Drained pre-byte #%d: 0x%02X\n", ++drained, b);
-    if (drained > 64) break;
+    if (drained > 64) break;  // safety
   }
 
   uint8_t id_len = (uint8_t)strlen(CAM_ID);
@@ -162,7 +168,9 @@ bool do_handshake() {
   if (!write_all((const uint8_t*)CAM_ID, id_len)) return false;
   g_client.flush();
 
-  // Read up to 8 bytes (same as old working code)
+  // Read up to 8 bytes — if the Pi sends just ACK, we'll get one byte and
+  // the rest of the buffer stays empty. If something weird is happening,
+  // we'll see it.
   uint8_t resp[8] = {0};
   int n = read_bytes(resp, 8, CONNECT_TIMEOUT_MS);
 
@@ -172,9 +180,16 @@ bool do_handshake() {
 
   if (n >= 1 && resp[0] == ACK_BYTE) {
     Serial.println("[Handshake] Pi accepted ✓");
+    // If extra bytes came in, that's a bug we want to know about
+    if (n > 1) {
+      Serial.printf("[Handshake] WARNING: %d extra byte(s) after ACK\n", n - 1);
+    }
     return true;
   }
 
+  // Detect TLS Alert record — something in the HaLow stack is injecting
+  // synthetic responses when the real connection isn't established yet.
+  // Signature: first byte 0x15, followed by 0x03 0x03 (TLS 1.2 version).
   if (n >= 3 && resp[0] == 0x15 && resp[1] == 0x03 && resp[2] == 0x03) {
     Serial.println("[Handshake] Phantom TLS-alert response — radio stack "
                    "not ready, waiting before retry");
@@ -192,6 +207,7 @@ bool do_handshake() {
 bool ensure_tcp_connected() {
   if (g_tcp_live && g_client.connected()) return true;
 
+  // Always tear down, regardless of what connected() says
   Serial.println("[TCP] Forcing socket teardown before reconnect");
   g_client.stop();
   delay(SOCKET_TEARDOWN_MS);
@@ -270,14 +286,37 @@ bool send_image(const uint8_t* buf, uint32_t len) {
   return false;
 }
 
+// Send a zero-length frame to keep the session alive.
+void send_heartbeat() {
+  if (!g_tcp_live) return;
+
+  Serial.println("[HB] Sending heartbeat");
+
+  uint8_t zero[4] = {0, 0, 0, 0};
+  if (!write_all(zero, 4)) {
+    Serial.println("[HB] Heartbeat failed: connection dead");
+    return;
+  }
+
+  int response = wait_for_byte(ACK_TIMEOUT_MS);
+  if (response == ACK_BYTE) {
+    Serial.println("[HB] Ping");
+    g_last_sent_ms = millis();
+  } else {
+    Serial.println("[HB] No ping: marking connection dead");
+    g_tcp_live = false;
+  }
+}
+
 // Capture a frame and upload it with retry.
 void capture_and_send() {
-  Serial.printf("\n[Cam %s] Timer fired: burst of %d\n", CAM_ID, BURST_COUNT);
+  Serial.printf("\n[Cam %s] Motion detected: burst of %d\n", CAM_ID, BURST_COUNT);
+
+  // Wait for the animal to move into the centre of the frame
+  delay(PRE_CAPTURE_DELAY_MS);
 
   for (int shot = 1; shot <= BURST_COUNT; shot++) {
-    if (BURST_COUNT > 1) {
-      Serial.printf("[Cam %s] Burst frame %d/%d\n", CAM_ID, shot, BURST_COUNT);
-    }
+    Serial.printf("[Cam %s] Burst frame %d/%d\n", CAM_ID, shot, BURST_COUNT);
 
     camera_fb_t* fb = esp_camera_fb_get();
     if (!fb) {
@@ -309,8 +348,16 @@ void capture_and_send() {
 
 void setup() {
   Serial.begin(115200);
-  delay(500);
-  Serial.println("\n=== Wildlife Cam — Demo Mode (15s timer) ===");
+  
+  // PIR needs ~60 s to stabilise after power-on
+  pinMode(PIR_PIN, INPUT);
+
+
+  Serial.println("[PIR] Waiting for sensor to stabilise...");
+  for (int i = 5; i > 0; i--) {
+    Serial.printf("[PIR] %d seconds remaining...\n", i);
+    delay(1000);
+  }
 
   camera_config_t config;
   config.ledc_channel = LEDC_CHANNEL_0;
@@ -331,11 +378,11 @@ void setup() {
   config.pin_sscb_scl = SIOC_GPIO_NUM;
   config.pin_pwdn     = PWDN_GPIO_NUM;
   config.pin_reset    = RESET_GPIO_NUM;
-  config.xclk_freq_hz = 10000000;
+  config.xclk_freq_hz = 20000000;
   config.pixel_format = PIXFORMAT_JPEG;
-  config.frame_size   = FRAMESIZE_UXGA;
+  config.frame_size   = FRAMESIZE_XGA;
   config.fb_location  = CAMERA_FB_IN_PSRAM;
-  config.jpeg_quality = 10;          // matches old working code
+  config.jpeg_quality = 14;
   config.grab_mode    = CAMERA_GRAB_LATEST;
   config.fb_count     = 2;
 
@@ -348,13 +395,13 @@ void setup() {
   s->set_vflip(s, 1);
   s->set_brightness(s, 1);
   s->set_saturation(s, 0);
-  s->set_sharpness(s, 2);
-  s->set_denoise(s, 1);
-  s->set_exposure_ctrl(s, 1);
-  s->set_aec2(s, 1);
-  s->set_gain_ctrl(s, 1);
-  s->set_awb_gain(s, 1);
-  s->set_lenc(s, 1);
+  s->set_sharpness(s, 2);          // crisper edges on fur/feathers
+  s->set_denoise(s, 1);            // reduces grain in low-light shots
+  s->set_exposure_ctrl(s, 1);      // enable auto-exposure
+  s->set_aec2(s, 1);               // AEC DSP — better exposure in high-contrast scenes
+  s->set_gain_ctrl(s, 1);          // enable auto-gain
+  s->set_awb_gain(s, 1);           // auto white-balance gain
+  s->set_lenc(s, 1);               // lens correction for even illumination
 
   camera_ready = true;
   Serial.printf("[Cam %s] Camera ready\n", CAM_ID);
@@ -364,17 +411,48 @@ void setup() {
   halow_connect();
 
   ensure_tcp_connected();
+}
 
-  Serial.printf("[Timer] Capturing every %u ms\n", CAPTURE_INTERVAL_MS);
 
-  // Fire first capture immediately
-  g_last_capture_ms = millis() - CAPTURE_INTERVAL_MS;
+// Returns true if PIR stays HIGH for `required_ms` of consecutive sampling
+bool pir_confirmed(uint32_t required_ms) {
+  unsigned long start = millis();
+  while (millis() - start < required_ms) {
+    if (digitalRead(PIR_PIN) != HIGH) return false;
+    delay(5);
+  }
+  return true;
 }
 
 void loop() {
-  if (millis() - g_last_capture_ms >= CAPTURE_INTERVAL_MS) {
-    g_last_capture_ms = millis();
-    capture_and_send();
+  static bool pir_prev = false;
+
+  bool pir_now      = digitalRead(PIR_PIN) == HIGH;
+  bool rising_edge  = pir_now && !pir_prev;
+  bool cooled_down  = (millis() - g_last_trigger_ms) >= COOLDOWN_MS;
+  bool tx_quiet     = (millis() - g_last_tx_ms) >= PIR_BLANK_AFTER_TX_MS;
+
+  if (rising_edge && cooled_down && tx_quiet && !upload_active) {
+    if (pir_confirmed(300)) {
+      Serial.printf("[PIR] Motion CONFIRMED @ t=%lu (since_last=%lu ms)\n",
+                    millis(), millis() - g_last_trigger_ms);
+      g_last_trigger_ms = millis();
+      upload_active     = true;
+      capture_and_send();
+      upload_active     = false;
+      g_last_tx_ms      = millis();
+    } else {
+      Serial.println("[PIR] Glitch rejected (failed 300ms hold)");
+    }
   }
-  delay(50);
+
+  if (tx_quiet) pir_prev = pir_now;
+
+  // HEARTBEAT DISABLED FOR DEBUGGING — re-enable after testing
+  // if ((millis() - g_last_sent_ms) >= HEARTBEAT_INTERVAL_MS && !upload_active) {
+  //   Serial.println("[HB] === heartbeat firing ===");
+  //   ensure_tcp_connected();
+  //   send_heartbeat();
+  //   g_last_tx_ms = millis();
+  // }
 }

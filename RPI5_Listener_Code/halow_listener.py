@@ -26,25 +26,22 @@ MAX_IMAGE_BYTES   = 10 * 1024 * 1024
 RECV_CHUNK_TIMEOUT_S = 300
 LISTEN_BACKLOG    = 5
 
-OUTPUT_DIR        = "/home/pi/Public/WildLife-Detection/Firebase/Images"
+OUTPUT_DIR        = "/home/pi/Public/WildLife-Detection/Images"
 DISK_WARN_BYTES   = 500 * 1024 * 1024
 UPLOAD_TO_FIREBASE = True
 
 CLAUDE_MODEL = "claude-sonnet-4-6"
-ANTHROPIC_API_KEY = "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"
+ANTHROPIC_API_KEY = "CLAUDE_API_KEY"
 
-FIREBASE_CERT     = (
-    "/home/pi/Public/WildLife-Detection/Firebase/"
-    "real-time-wildlife-detector-firebase-adminsdk-fbsvc-7c1cbed963.json"
-)
-FIREBASE_BUCKET   = "real-time-wildlife-detector.firebasestorage.app"
+FIREBASE_CERT     = ("FIREBASE_CERT_FILE")
+FIREBASE_BUCKET   = "FIREBASE_PROJECT_BUCKET"
 
-MODEL_PATH        = os.path.join(os.path.dirname(__file__), "yolov8n.hef")
+MODEL_PATH        = os.path.join(os.path.dirname(__file__), "yolov8s.hef")
 LABELS_PATH       = "/home/pi/Public/WildLife-Detection/YOLOv8n/coco.txt"
 
-GMAIL_ADDRESS      = "vincenttruong.usa@gmail.com"
-GMAIL_APP_PASSWORD = "ncvvcnqyxvdkstlm"
-ALERT_TO_ADDRESS   = "vincenttruong.usa@gmail.com"
+GMAIL_ADDRESS      = "SEND_FROM_EMAIL"
+GMAIL_APP_PASSWORD = "EMAIL_APP_PASSWORD"
+ALERT_TO_ADDRESS   = "SEND_TO_EMAIL"
 SMS_ENABLED        = False
 SMS_COOLDOWN_S     = 60
 _sms_last_sent: dict[str, float] = {}
